@@ -14,14 +14,15 @@ type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
-type View = "dashboard" | "accounts" | "transactions" | "categories" | "assets";
-type Modal = "account" | "transaction" | "category" | "asset" | null;
+type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type View = "dashboard" | "accounts" | "transactions" | "categories" | "cost_centers" | "assets";
+type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string; institution: string; account_type: string; initial_balance: string;
   category_type: string; parent_id: string; asset_type: string; asset_class: string;
   value: string; notes: string; transaction_type: string; account_id: string;
   destination_account_id: string; category_id: string; amount: string;
-  transaction_date: string; description: string;
+  transaction_date: string; description: string; center_type: string; cost_center_id: string;
 };
 const emptyForm = (): FormState => ({
   name: "", institution: "", account_type: "checking", initial_balance: "",
@@ -29,7 +30,9 @@ const emptyForm = (): FormState => ({
   value: "", notes: "", transaction_type: "expense", account_id: "",
   destination_account_id: "", category_id: "", amount: "",
   transaction_date: new Date().toISOString().slice(0, 10), description: "",
+  center_type: "property", cost_center_id: "",
 });
+const centerTypeLabel: Record<string, string> = { property: "Imóvel", business: "Negócio", personal: "Pessoal", other: "Outro" };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const dateFmt = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
