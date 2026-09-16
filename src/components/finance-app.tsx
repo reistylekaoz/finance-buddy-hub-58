@@ -41,6 +41,7 @@ const nav = [
   { id: "accounts" as const, label: "Contas", icon: WalletCards },
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
+  { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
 ];
 const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
