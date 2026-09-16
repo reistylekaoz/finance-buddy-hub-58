@@ -16,6 +16,20 @@ type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type View = "dashboard" | "accounts" | "transactions" | "categories" | "assets";
 type Modal = "account" | "transaction" | "category" | "asset" | null;
+type FormState = {
+  name: string; institution: string; account_type: string; initial_balance: string;
+  category_type: string; parent_id: string; asset_type: string; asset_class: string;
+  value: string; notes: string; transaction_type: string; account_id: string;
+  destination_account_id: string; category_id: string; amount: string;
+  transaction_date: string; description: string;
+};
+const emptyForm = (): FormState => ({
+  name: "", institution: "", account_type: "checking", initial_balance: "",
+  category_type: "expense", parent_id: "", asset_type: "asset", asset_class: "",
+  value: "", notes: "", transaction_type: "expense", account_id: "",
+  destination_account_id: "", category_id: "", amount: "",
+  transaction_date: new Date().toISOString().slice(0, 10), description: "",
+});
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const dateFmt = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
@@ -41,7 +55,7 @@ export function FinanceApp() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [form, setForm] = useState<Record<string, string>>({});
+  const [form, setForm] = useState<FormState>(emptyForm);
 
   async function load() {
     setLoading(true);
@@ -92,8 +106,8 @@ export function FinanceApp() {
     return { month: date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), receita: rows.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0), despesa: rows.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0) };
   }), [transactions]);
 
-  function open(type: Exclude<Modal, null>) { setError(""); setForm({ transaction_type: "expense", account_type: "checking", category_type: "expense", asset_type: "asset", transaction_date: new Date().toISOString().slice(0, 10) }); setModal(type); }
-  function field(key: string) { return { value: form[key] ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [key]: e.target.value })) }; }
+  function open(type: Exclude<Modal, null>) { setError(""); setForm(emptyForm()); setModal(type); }
+  function field(key: keyof FormState) { return { value: form[key], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [key]: e.target.value })) }; }
 
   async function save(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError("");
@@ -143,5 +157,5 @@ function Dashboard({ totals, chartData, transactions, accounts, categoryPath }: 
 function Accounts({ accounts, onAdd }: { accounts: (Account & { balance: number })[]; onAdd: () => void }) { if (!accounts.length) return <Empty title="Comece pelas suas contas" text="Cadastre bancos, carteiras e investimentos." onAdd={onAdd}/>; return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accounts.map(a => <div key={a.id} className="rounded-lg border border-border bg-card p-5"><div className="flex items-start justify-between"><div className="grid size-10 place-items-center rounded-md bg-primary-soft text-primary"><Landmark /></div><span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">{a.is_active ? "Ativa" : "Inativa"}</span></div><h2 className="mt-5 font-semibold">{a.name}</h2><p className="text-sm text-muted-foreground">{a.institution || "Conta pessoal"}</p><p className="mt-4 font-mono text-2xl tabular-nums">{money.format(a.balance)}</p></div>)}</div>; }
 function TransactionRows({ transactions, accounts, categoryPath }: { transactions: Transaction[]; accounts: Account[]; categoryPath: (id:string|null)=>string }) { return <div className="divide-y divide-border">{transactions.map(tx => { const positive=tx.transaction_type==="income"; return <div key={tx.id} className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto]"><span className="hidden text-xs text-muted-foreground sm:block">{dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}</span><div><p className="text-sm font-medium">{tx.description}</p><p className="text-xs text-muted-foreground sm:hidden">{dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}</p></div><div className="hidden text-xs text-muted-foreground sm:block">{tx.transaction_type === "transfer" ? "Transferência" : categoryPath(tx.category_id)} · {accounts.find(a=>a.id===tx.account_id)?.name}</div><span className={cn("font-mono text-sm tabular-nums", positive ? "text-income" : tx.transaction_type === "expense" ? "text-expense" : "text-foreground")}>{positive ? "+" : tx.transaction_type === "expense" ? "−" : ""}{money.format(Number(tx.amount))}</span></div>})}{!transactions.length && <p className="p-8 text-center text-sm text-muted-foreground">Nenhum lançamento neste período.</p>}</div>; }
 function Transactions({ transactions, accounts, categoryPath, onAdd }: any) { if (!transactions.length) return <Empty title="Registre a primeira movimentação" text="Adicione receitas, despesas ou transferências." onAdd={onAdd}/>; return <section className="rounded-lg border border-border bg-card"><TransactionRows transactions={transactions} accounts={accounts} categoryPath={categoryPath}/></section>; }
-function Categories({ categories, onAdd }: { categories: Category[]; onAdd:()=>void }) { if(!categories.length) return <Empty title="Organize seus lançamentos" text="Crie grupos e subgrupos sem limite de níveis." onAdd={onAdd}/>; const roots=categories.filter(c=>!c.parent_id); const Branch=({c,depth=0}:{c:Category;depth?:number})=><><div className="flex items-center justify-between border-b border-border px-4 py-3" style={{paddingLeft:`${16+depth*24}px`}}><span className="flex items-center gap-2 text-sm"><ChevronRight className="size-4 text-muted-foreground"/>{c.name}</span><span className={cn("rounded-full px-2 py-1 text-xs", c.category_type==="income"?"bg-income-soft text-income":"bg-expense-soft text-expense")}>{c.category_type==="income"?"Receita":"Despesa"}</span></div>{categories.filter(x=>x.parent_id===c.id).map(child=><Branch key={child.id} c={child} depth={depth+1}/>)}</>; return <div className="overflow-hidden rounded-lg border border-border bg-card">{roots.map(c=><Branch key={c.id} c={c}/>)}</div>; }
+function Categories({ categories, onAdd }: { categories: Category[]; onAdd:()=>void }) { if(!categories.length) return <Empty title="Organize seus lançamentos" text="Crie grupos e subgrupos sem limite de níveis." onAdd={onAdd}/>; const roots=categories.filter(c=>!c.parent_id); const Branch=({c,depth=0}:{c:Category;depth?:number})=><><div className="flex items-center justify-between border-b border-border px-4 py-3"><span className="flex items-center gap-2 text-sm">{Array.from({length:depth}).map((_,index)=><span key={index} className="w-3"/>)}<ChevronRight className="size-4 text-muted-foreground"/>{c.name}</span><span className={cn("rounded-full px-2 py-1 text-xs", c.category_type==="income"?"bg-income-soft text-income":"bg-expense-soft text-expense")}>{c.category_type==="income"?"Receita":"Despesa"}</span></div>{categories.filter(x=>x.parent_id===c.id).map(child=><Branch key={child.id} c={child} depth={depth+1}/>)}</>; return <div className="overflow-hidden rounded-lg border border-border bg-card">{roots.map(c=><Branch key={c.id} c={c}/>)}</div>; }
 function Assets({ assets, totals, onAdd }: any) { return <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-3"><Metric label="Ativos" value={totals.assetTotal} tone="positive"/><Metric label="Passivos" value={totals.liabilityTotal} tone="negative"/><Metric label="Patrimônio líquido" value={totals.assetTotal-totals.liabilityTotal}/></div>{assets.length ? <div className="grid gap-3 sm:grid-cols-2">{assets.map((a:Asset)=><div key={a.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-5"><div><p className="font-semibold">{a.name}</p><p className="text-xs text-muted-foreground">{a.asset_class}</p></div><div className="text-right"><p className={cn("font-mono tabular-nums",a.asset_type==="asset"?"text-income":"text-expense")}>{money.format(Number(a.value))}</p><p className="text-xs text-muted-foreground">{a.asset_type==="asset"?"Ativo":"Passivo"}</p></div></div>)}</div> : <Empty title="Monte seu balanço patrimonial" text="Cadastre seus bens, investimentos e dívidas." onAdd={onAdd}/>}</div>; }
