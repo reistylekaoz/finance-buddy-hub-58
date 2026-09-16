@@ -130,6 +130,42 @@ export type Database = {
           },
         ]
       }
+      cost_centers: {
+        Row: {
+          center_type: Database["public"]["Enums"]["cost_center_type"]
+          color: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          center_type?: Database["public"]["Enums"]["cost_center_type"]
+          color?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          center_type?: Database["public"]["Enums"]["cost_center_type"]
+          color?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -159,6 +195,7 @@ export type Database = {
           account_id: string
           amount: number
           category_id: string | null
+          cost_center_id: string | null
           created_at: string
           description: string
           destination_account_id: string | null
@@ -173,6 +210,7 @@ export type Database = {
           account_id: string
           amount: number
           category_id?: string | null
+          cost_center_id?: string | null
           created_at?: string
           description: string
           destination_account_id?: string | null
@@ -187,6 +225,7 @@ export type Database = {
           account_id?: string
           amount?: number
           category_id?: string | null
+          cost_center_id?: string | null
           created_at?: string
           description?: string
           destination_account_id?: string | null
@@ -213,6 +252,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "transactions_cost_center_id_fkey"
+            columns: ["cost_center_id"]
+            isOneToOne: false
+            referencedRelation: "cost_centers"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "transactions_destination_account_id_fkey"
             columns: ["destination_account_id"]
             isOneToOne: false
@@ -232,6 +278,7 @@ export type Database = {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
       asset_type: "asset" | "liability"
       category_type: "income" | "expense"
+      cost_center_type: "property" | "business" | "personal" | "other"
       transaction_type: "income" | "expense" | "transfer"
     }
     CompositeTypes: {
@@ -363,6 +410,7 @@ export const Constants = {
       account_type: ["checking", "savings", "cash", "investment", "credit"],
       asset_type: ["asset", "liability"],
       category_type: ["income", "expense"],
+      cost_center_type: ["property", "business", "personal", "other"],
       transaction_type: ["income", "expense", "transfer"],
     },
   },
