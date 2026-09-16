@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDownRight, ArrowRightLeft, ArrowUpRight, Building2, ChevronRight, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Menu, Plus, Shapes, TrendingUp, WalletCards, X } from "lucide-react";
+import { ArrowRightLeft, Building2, ChevronRight, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Menu, Plus, Shapes, TrendingUp, WalletCards, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
