@@ -113,6 +113,22 @@ export function FinanceApp() {
     return { month: date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), receita: rows.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0), despesa: rows.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0) };
   }), [transactions]);
 
+  const centerSummary = useMemo(() => {
+    const rows = costCenters.map((center) => {
+      const own = transactions.filter((t) => t.cost_center_id === center.id);
+      const income = own.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0);
+      const expense = own.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      return { ...center, income, expense, result: income - expense, count: own.length };
+    });
+    const orphan = transactions.filter((t) => !t.cost_center_id && t.transaction_type !== "transfer");
+    if (orphan.length) {
+      const income = orphan.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0);
+      const expense = orphan.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      rows.push({ id: "none", user_id: "", name: "Sem centro de custo", center_type: "other", description: null, color: "orange", is_active: true, created_at: "", updated_at: "", income, expense, result: income - expense, count: orphan.length } as (typeof rows)[number]);
+    }
+    return rows.sort((a, b) => b.income + b.expense - (a.income + a.expense));
+  }, [costCenters, transactions]);
+
   function open(type: Exclude<Modal, null>) { setError(""); setForm(emptyForm()); setModal(type); }
   function field(key: keyof FormState) { return { value: form[key], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [key]: e.target.value })) }; }
 
