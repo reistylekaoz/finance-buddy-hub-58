@@ -4,22 +4,22 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.975 0.008 75);
-  --foreground: oklch(0.22 0.025 55);
-  --card: oklch(0.995 0.003 75);
-  --card-foreground: oklch(0.22 0.025 55);
-  --popover: oklch(0.995 0.003 75);
-  --popover-foreground: oklch(0.22 0.025 55);
-  --primary: oklch(0.47 0.145 45);
-  --primary-foreground: oklch(0.985 0.01 75);
-  --primary-soft: oklch(0.93 0.045 55);
-  --primary-light: oklch(0.75 0.13 55);
-  --secondary: oklch(0.94 0.02 68);
-  --secondary-foreground: oklch(0.35 0.075 45);
-  --muted: oklch(0.945 0.011 70);
-  --muted-foreground: oklch(0.5 0.025 55);
-  --accent: oklch(0.92 0.035 58);
-  --accent-foreground: oklch(0.34 0.08 45);
+  --background: oklch(0.975 0.012 73.5);
+  --foreground: oklch(0.225 0.019 55.5);
+  --card: oklch(0.992 0.006 73.5);
+  --card-foreground: oklch(0.225 0.019 55.5);
+  --popover: oklch(0.992 0.006 73.5);
+  --popover-foreground: oklch(0.225 0.019 55.5);
+  --primary: oklch(0.554 0.181 41.1);
+  --primary-foreground: oklch(0.975 0.012 73.5);
+  --primary-soft: oklch(0.925 0.044 55);
+  --primary-light: oklch(0.78 0.135 60);
+  --secondary: oklch(0.657 0.177 52.5);
+  --secondary-foreground: oklch(0.225 0.019 55.5);
+  --muted: oklch(0.944 0.014 72);
+  --muted-foreground: oklch(0.505 0.025 57);
+  --accent: oklch(0.82 0.128 75.5);
+  --accent-foreground: oklch(0.225 0.019 55.5);
   --destructive: oklch(0.53 0.18 25);
   --destructive-foreground: oklch(0.985 0.01 75);
   --destructive-soft: oklch(0.94 0.035 25);
@@ -27,17 +27,17 @@
   --income-soft: oklch(0.93 0.035 150);
   --expense: oklch(0.53 0.16 25);
   --expense-soft: oklch(0.94 0.035 25);
-  --border: oklch(0.88 0.018 65);
-  --input: oklch(0.86 0.02 65);
-  --ring: oklch(0.55 0.14 45);
-  --sidebar: oklch(0.955 0.014 72);
-  --overlay: oklch(0.18 0.02 50 / 0.38);
+  --border: oklch(0.888 0.026 73);
+  --input: oklch(0.888 0.026 73);
+  --ring: oklch(0.554 0.181 41.1);
+  --sidebar: oklch(0.958 0.017 73);
+  --overlay: oklch(0.225 0.019 55.5 / 0.42);
   --radius: 0.45rem;
 }
 
 @theme inline {
-  --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
