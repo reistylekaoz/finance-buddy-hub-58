@@ -23,8 +23,8 @@ import {
   Menu,
   Pencil,
   Plus,
-  Shapes,
   Trash2,
+  Shapes,
   TrendingUp,
   WalletCards,
   X,
@@ -134,7 +134,6 @@ export function FinanceApp() {
   const navigate = useNavigate();
   const [view, setView] = useState<View>("dashboard");
   const [modal, setModal] = useState<Modal>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -337,28 +336,78 @@ export function FinanceApp() {
     return rows.sort((a, b) => b.count - a.count);
   }, [costCenters, transactions, accountCurrency]);
 
-  function open(type: Exclude<Modal, null>, editing?: { id: string; values: Partial<FormState> }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  function open(type: Exclude<Modal, null>) {
     setError("");
-    setEditingId(editing?.id ?? null);
-    setForm({ ...emptyForm(), ...(editing?.values ?? {}) });
+    setForm(emptyForm());
+    setEditingId(null);
     setModal(type);
   }
-  function editAsset(asset: Asset) {
-    open("asset", {
-      id: asset.id,
-      values: {
-        name: asset.name,
-        asset_type: asset.asset_type,
-        asset_class: asset.asset_class,
-        value: String(asset.value),
-        notes: asset.notes ?? "",
-      },
-    });
+  function edit(type: Exclude<Modal, null>, row: any) {
+    setError("");
+    setEditingId(row.id);
+    const base = emptyForm();
+    if (type === "account")
+      setForm({
+        ...base,
+        name: row.name,
+        institution: row.institution ?? "",
+        account_type: row.account_type,
+        currency: row.currency || "BRL",
+        initial_balance: String(row.initial_balance ?? ""),
+      });
+    else if (type === "category")
+      setForm({
+        ...base,
+        name: row.name,
+        category_type: row.category_type,
+        parent_id: row.parent_id ?? "",
+      });
+    else if (type === "asset")
+      setForm({
+        ...base,
+        name: row.name,
+        asset_type: row.asset_type,
+        asset_class: row.asset_class,
+        value: String(row.value ?? ""),
+        notes: row.notes ?? "",
+      });
+    else if (type === "cost_center")
+      setForm({
+        ...base,
+        name: row.name,
+        center_type: row.center_type,
+        description: row.description ?? "",
+      });
+    else
+      setForm({
+        ...base,
+        transaction_type: row.transaction_type,
+        account_id: row.account_id,
+        destination_account_id: row.destination_account_id ?? "",
+        category_id: row.category_id ?? "",
+        cost_center_id: row.cost_center_id ?? "",
+        amount: String(row.amount ?? ""),
+        transaction_date: row.transaction_date,
+        description: row.description,
+        notes: row.notes ?? "",
+      });
+    setModal(type);
   }
-  async function deleteAsset(asset: Asset) {
-    if (!window.confirm(`Excluir "${asset.name}"? Essa ação não pode ser desfeita.`)) return;
-    const { error: deleteError } = await supabase.from("assets").delete().eq("id", asset.id);
-    if (deleteError) setError(deleteError.message);
+  const tableOf: Record<
+    Exclude<Modal, null>,
+    "accounts" | "categories" | "assets" | "cost_centers" | "transactions"
+  > = {
+    account: "accounts",
+    category: "categories",
+    asset: "assets",
+    cost_center: "cost_centers",
+    transaction: "transactions",
+  };
+  async function remove(type: Exclude<Modal, null>, id: string, label: string) {
+    if (!window.confirm(`Excluir "${label}"? Essa ação não pode ser desfeita.`)) return;
+    const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
+    if (delError) window.alert(`Não foi possível excluir: ${delError.message}`);
     else await load();
   }
   function field(key: keyof FormState) {
@@ -381,54 +430,52 @@ export function FinanceApp() {
       return;
     }
     let result: { error: { message: string } | null };
-    if (modal === "account")
-      result = await supabase.from("accounts").insert({
-        user_id: userId,
-        name: form.name,
-        institution: form.institution || null,
-        account_type: form.account_type as Account["account_type"],
-        currency: form.currency,
-        initial_balance: Number(form.initial_balance || 0),
-      });
-    else if (modal === "category")
-      result = await supabase.from("categories").insert({
-        user_id: userId,
-        name: form.name,
-        category_type: form.category_type as Category["category_type"],
-        parent_id: form.parent_id || null,
-      });
-    else if (modal === "asset") {
-      const payload = {
-        name: form.name,
-        asset_type: form.asset_type as Asset["asset_type"],
-        asset_class: form.asset_class,
-        value: Number(form.value || 0),
-        notes: form.notes || null,
-      };
-      result = editingId
-        ? await supabase.from("assets").update(payload).eq("id", editingId)
-        : await supabase.from("assets").insert({ ...payload, user_id: userId });
-    } else if (modal === "cost_center")
-      result = await supabase.from("cost_centers").insert({
-        user_id: userId,
-        name: form.name,
-        center_type: form.center_type as CostCenter["center_type"],
-        description: form.description || null,
-      });
-    else
-      result = await supabase.from("transactions").insert({
-        user_id: userId,
-        transaction_type: form.transaction_type as Transaction["transaction_type"],
-        account_id: form.account_id,
-        destination_account_id:
-          form.transaction_type === "transfer" ? form.destination_account_id : null,
-        category_id: form.transaction_type === "transfer" ? null : form.category_id || null,
-        cost_center_id: form.cost_center_id || null,
-        amount: Number(form.amount),
-        transaction_date: form.transaction_date,
-        description: form.description,
-        notes: form.notes || null,
-      });
+    const payload: Record<string, unknown> =
+      modal === "account"
+        ? {
+            name: form.name,
+            institution: form.institution || null,
+            account_type: form.account_type,
+            currency: form.currency,
+            initial_balance: Number(form.initial_balance || 0),
+          }
+        : modal === "category"
+          ? {
+              name: form.name,
+              category_type: form.category_type,
+              parent_id: form.parent_id || null,
+            }
+          : modal === "asset"
+            ? {
+                name: form.name,
+                asset_type: form.asset_type,
+                asset_class: form.asset_class,
+                value: Number(form.value || 0),
+                notes: form.notes || null,
+              }
+            : modal === "cost_center"
+              ? {
+                  name: form.name,
+                  center_type: form.center_type,
+                  description: form.description || null,
+                }
+              : {
+                  transaction_type: form.transaction_type,
+                  account_id: form.account_id,
+                  destination_account_id:
+                    form.transaction_type === "transfer" ? form.destination_account_id : null,
+                  category_id:
+                    form.transaction_type === "transfer" ? null : form.category_id || null,
+                  cost_center_id:
+                    form.transaction_type === "transfer" ? null : form.cost_center_id || null,
+                  amount: Number(form.amount),
+                  transaction_date: form.transaction_date,
+                  description: form.description,
+                  notes: form.notes || null,
+                };
+    const table = tableOf[modal];
+    if (editingId) result = await (supabase.from(table) as any).update(payload).eq("id", editingId);
+    else result = await (supabase.from(table) as any).insert({ user_id: userId, ...payload });
     if (result.error) setError(result.error.message);
     else {
       setModal(null);
@@ -592,6 +639,8 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   centerSummary={centerSummary}
+                  onEditTx={(tx: Transaction) => edit("transaction", tx)}
+                  onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                 />
               )}
               {view === "accounts" && (
@@ -599,6 +648,8 @@ export function FinanceApp() {
                   accounts={balanceByAccount}
                   onAdd={() => open("account")}
                   rateDate={rateDate}
+                  onEdit={(a: Account) => edit("account", a)}
+                  onDelete={(a: Account) => remove("account", a.id, a.name)}
                 />
               )}
               {view === "transactions" && (
@@ -608,6 +659,8 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   onAdd={() => open("transaction")}
+                  onEditTx={(tx: Transaction) => edit("transaction", tx)}
+                  onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                 />
               )}
               {view === "import" && (
@@ -620,47 +673,48 @@ export function FinanceApp() {
                 />
               )}
               {view === "categories" && (
-                <Categories categories={categories} onAdd={() => open("category")} />
+                <Categories
+                  categories={categories}
+                  onAdd={() => open("category")}
+                  onEdit={(c: Category) => edit("category", c)}
+                  onDelete={(c: Category) => remove("category", c.id, c.name)}
+                />
               )}
               {view === "cost_centers" && (
-                <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} />
+                <CostCenters
+                  rows={centerSummary}
+                  onAdd={() => open("cost_center")}
+                  onEdit={(c: CostCenter) => edit("cost_center", c)}
+                  onDelete={(c: CostCenter) => remove("cost_center", c.id, c.name)}
+                />
               )}
               {view === "assets" && (
                 <Assets
                   assets={assets}
                   totals={totals}
                   onAdd={() => open("asset")}
-                  onEdit={editAsset}
-                  onDelete={deleteAsset}
+                  onEdit={(a: Asset) => edit("asset", a)}
+                  onDelete={(a: Asset) => remove("asset", a.id, a.name)}
                 />
               )}
             </>
           )}
         </main>
       </div>
-      <Dialog
-        open={modal !== null}
-        onOpenChange={(openState) => {
-          if (!openState) {
-            setModal(null);
-            setEditingId(null);
-          }
-        }}
-      >
+      <Dialog open={modal !== null} onOpenChange={(openState) => !openState && setModal(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {modal === "account"
-                ? "Nova conta"
-                : modal === "category"
-                  ? "Nova categoria"
-                  : modal === "asset"
-                    ? editingId
-                      ? "Editar item patrimonial"
-                      : "Novo item patrimonial"
-                    : modal === "cost_center"
-                      ? "Novo centro de custo"
-                      : "Novo lançamento"}
+              {(editingId ? "Editar " : "Novo ") +
+                (modal === "account"
+                  ? "conta"
+                  : modal === "category"
+                    ? "categoria"
+                    : modal === "asset"
+                      ? "item patrimonial"
+                      : modal === "cost_center"
+                        ? "centro de custo"
+                        : "lançamento")}
             </DialogTitle>
             <DialogDescription>
               Preencha os dados para manter seus números atualizados.
@@ -874,6 +928,24 @@ export function FinanceApp() {
   );
 }
 
+function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <Button variant="ghost" size="icon" aria-label="Editar" onClick={onEdit}>
+        <Pencil className="size-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Excluir"
+        className="text-expense"
+        onClick={onDelete}
+      >
+        <Trash2 className="size-4" />
+      </Button>
+    </div>
+  );
+}
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
@@ -931,6 +1003,8 @@ function Dashboard({
   categoryPath,
   centerName,
   centerSummary,
+  onEditTx,
+  onDeleteTx,
 }: any) {
   return (
     <div className="space-y-4">
@@ -1021,6 +1095,8 @@ function Dashboard({
           accounts={accounts}
           categoryPath={categoryPath}
           centerName={centerName}
+          onEditTx={onEditTx}
+          onDeleteTx={onDeleteTx}
         />
       </section>
       {centerSummary.length > 0 && (
@@ -1075,10 +1151,14 @@ function Accounts({
   accounts,
   onAdd,
   rateDate,
+  onEdit,
+  onDelete,
 }: {
   accounts: (Account & { balance: number; currency: string; balanceBRL: number })[];
   onAdd: () => void;
   rateDate: string;
+  onEdit: (a: Account) => void;
+  onDelete: (a: Account) => void;
 }) {
   if (!accounts.length)
     return (
@@ -1096,9 +1176,12 @@ function Accounts({
             <div className="grid size-10 place-items-center rounded-md bg-primary-soft text-primary">
               <Landmark />
             </div>
-            <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-              {a.is_active ? "Ativa" : "Inativa"}
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                {a.is_active ? "Ativa" : "Inativa"}
+              </span>
+              <RowActions onEdit={() => onEdit(a)} onDelete={() => onDelete(a)} />
+            </div>
           </div>
           <h2 className="mt-5 font-semibold">{a.name}</h2>
           <p className="text-sm text-muted-foreground">{a.institution || "Conta pessoal"}</p>
@@ -1123,11 +1206,15 @@ function TransactionRows({
   accounts,
   categoryPath,
   centerName,
+  onEditTx,
+  onDeleteTx,
 }: {
   transactions: Transaction[];
   accounts: Account[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
+  onEditTx?: (tx: Transaction) => void;
+  onDeleteTx?: (tx: Transaction) => void;
 }) {
   return (
     <div className="divide-y divide-border">
@@ -1138,7 +1225,7 @@ function TransactionRows({
         return (
           <div
             key={tx.id}
-            className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto]"
+            className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto_auto]"
           >
             <span className="hidden text-xs text-muted-foreground sm:block">
               {dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}
@@ -1171,6 +1258,9 @@ function TransactionRows({
               {positive ? "+" : tx.transaction_type === "expense" ? "−" : ""}
               {formatCurrency(Number(tx.amount), currency)}
             </span>
+            {onEditTx && onDeleteTx && (
+              <RowActions onEdit={() => onEditTx(tx)} onDelete={() => onDeleteTx(tx)} />
+            )}
           </div>
         );
       })}
@@ -1182,7 +1272,15 @@ function TransactionRows({
     </div>
   );
 }
-function Transactions({ transactions, accounts, categoryPath, centerName, onAdd }: any) {
+function Transactions({
+  transactions,
+  accounts,
+  categoryPath,
+  centerName,
+  onAdd,
+  onEditTx,
+  onDeleteTx,
+}: any) {
   if (!transactions.length)
     return (
       <Empty
@@ -1198,11 +1296,13 @@ function Transactions({ transactions, accounts, categoryPath, centerName, onAdd 
         accounts={accounts}
         categoryPath={categoryPath}
         centerName={centerName}
+        onEditTx={onEditTx}
+        onDeleteTx={onDeleteTx}
       />
     </section>
   );
 }
-function CostCenters({ rows, onAdd }: any) {
+function CostCenters({ rows, onAdd, onEdit, onDelete }: any) {
   if (!rows.length)
     return (
       <Empty
@@ -1252,9 +1352,14 @@ function CostCenters({ rows, onAdd }: any) {
               <div className="grid size-10 place-items-center rounded-md bg-primary-soft text-primary">
                 <Building2 />
               </div>
-              <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                {centerTypeLabel[r.center_type] ?? "Outro"}
-              </span>
+              <div className="flex items-center gap-1">
+                <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                  {centerTypeLabel[r.center_type] ?? "Outro"}
+                </span>
+                {r.id !== "none" && (
+                  <RowActions onEdit={() => onEdit(r)} onDelete={() => onDelete(r)} />
+                )}
+              </div>
             </div>
             <h2 className="mt-5 font-semibold">{r.name}</h2>
             <p className="text-xs text-muted-foreground">
@@ -1307,7 +1412,17 @@ function CostCenters({ rows, onAdd }: any) {
     </div>
   );
 }
-function Categories({ categories, onAdd }: { categories: Category[]; onAdd: () => void }) {
+function Categories({
+  categories,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  categories: Category[];
+  onAdd: () => void;
+  onEdit: (c: Category) => void;
+  onDelete: (c: Category) => void;
+}) {
   if (!categories.length)
     return (
       <Empty
@@ -1337,6 +1452,7 @@ function Categories({ categories, onAdd }: { categories: Category[]; onAdd: () =
         >
           {c.category_type === "income" ? "Receita" : "Despesa"}
         </span>
+        <RowActions onEdit={() => onEdit(c)} onDelete={() => onDelete(c)} />
       </div>
       {categories
         .filter((x) => x.parent_id === c.id)
@@ -1353,19 +1469,7 @@ function Categories({ categories, onAdd }: { categories: Category[]; onAdd: () =
     </div>
   );
 }
-function Assets({
-  assets,
-  totals,
-  onAdd,
-  onEdit,
-  onDelete,
-}: {
-  assets: Asset[];
-  totals: { assetTotal: number; liabilityTotal: number };
-  onAdd: () => void;
-  onEdit: (asset: Asset) => void;
-  onDelete: (asset: Asset) => void;
-}) {
+function Assets({ assets, totals, onAdd, onEdit, onDelete }: any) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -1378,45 +1482,26 @@ function Assets({
           {assets.map((a: Asset) => (
             <div
               key={a.id}
-              className="flex items-center justify-between rounded-lg border border-border bg-card p-5"
+              className="flex items-center gap-3 rounded-lg border border-border bg-card p-5"
             >
               <div>
                 <p className="font-semibold">{a.name}</p>
                 <p className="text-xs text-muted-foreground">{a.asset_class}</p>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p
-                    className={cn(
-                      "font-mono tabular-nums",
-                      a.asset_type === "asset" ? "text-income" : "text-expense",
-                    )}
-                  >
-                    {money.format(Number(a.value))}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {a.asset_type === "asset" ? "Ativo" : "Passivo"}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Editar ${a.name}`}
-                    onClick={() => onEdit(a)}
-                  >
-                    <Pencil className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Excluir ${a.name}`}
-                    onClick={() => onDelete(a)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
+              <div className="ml-auto text-right">
+                <p
+                  className={cn(
+                    "font-mono tabular-nums",
+                    a.asset_type === "asset" ? "text-income" : "text-expense",
+                  )}
+                >
+                  {money.format(Number(a.value))}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {a.asset_type === "asset" ? "Ativo" : "Passivo"}
+                </p>
               </div>
+              <RowActions onEdit={() => onEdit(a)} onDelete={() => onDelete(a)} />
             </div>
           ))}
         </div>
