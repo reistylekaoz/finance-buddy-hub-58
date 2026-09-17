@@ -19,14 +19,14 @@ type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
 type View = "dashboard" | "accounts" | "transactions" | "import" | "categories" | "cost_centers" | "assets";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
-  name: string; institution: string; account_type: string; initial_balance: string;
+  name: string; institution: string; account_type: string; initial_balance: string; currency: string;
   category_type: string; parent_id: string; asset_type: string; asset_class: string;
   value: string; notes: string; transaction_type: string; account_id: string;
   destination_account_id: string; category_id: string; amount: string;
   transaction_date: string; description: string; center_type: string; cost_center_id: string;
 };
 const emptyForm = (): FormState => ({
-  name: "", institution: "", account_type: "checking", initial_balance: "",
+  name: "", institution: "", account_type: "checking", initial_balance: "", currency: "BRL",
   category_type: "expense", parent_id: "", asset_type: "asset", asset_class: "",
   value: "", notes: "", transaction_type: "expense", account_id: "",
   destination_account_id: "", category_id: "", amount: "",
@@ -36,6 +36,8 @@ const emptyForm = (): FormState => ({
 const centerTypeLabel: Record<string, string> = { property: "Imóvel", business: "Negócio", personal: "Pessoal", other: "Outro" };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const currencyOptions = [{ code: "BRL", label: "Real (R$)" }, { code: "EUR", label: "Euro (€)" }, { code: "USD", label: "Dólar (US$)" }];
+const formatCurrency = (value: number, currency: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(value);
 const dateFmt = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 const nav = [
   { id: "dashboard" as const, label: "Visão geral", icon: LayoutDashboard },
