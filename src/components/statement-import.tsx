@@ -52,7 +52,7 @@ function parseOfx(text: string) {
   for (const block of blocks) {
     const tag = (name: string) => {
       const found = new RegExp(`<${name}>([^<\r\n]*)`, "i").exec(block);
-      return found ? found[1].trim() : "";
+      return found?.[1]?.trim() ?? "";
     };
     const date = normalizeDate(tag("DTPOSTED"));
     const amount = normalizeAmount(tag("TRNAMT"));
@@ -80,9 +80,10 @@ function splitCsvLine(line: string, delimiter: string) {
 function parseCsv(text: string) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (!lines.length) return [];
-  const delimiter = (lines[0].match(/;/g)?.length ?? 0) > (lines[0].match(/,/g)?.length ?? 0) ? ";" : ",";
+  const first = lines[0] ?? "";
+  const delimiter = (first.match(/;/g)?.length ?? 0) > (first.match(/,/g)?.length ?? 0) ? ";" : ",";
   const strip = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const header = splitCsvLine(lines[0], delimiter).map(strip);
+  const header = splitCsvLine(first, delimiter).map(strip);
   const findIndex = (terms: string[]) => header.findIndex((cell) => terms.some((term) => cell.includes(term)));
   let dateIndex = findIndex(["data", "date"]);
   let amountIndex = findIndex(["valor", "amount", "montante"]);
@@ -90,7 +91,7 @@ function parseCsv(text: string) {
   const idIndex = findIndex(["identificador", "id"]);
   const body = dateIndex >= 0 && amountIndex >= 0 ? lines.slice(1) : lines;
   if (dateIndex < 0 || amountIndex < 0) {
-    const sample = splitCsvLine(lines[0], delimiter);
+    const sample = splitCsvLine(first, delimiter);
     dateIndex = sample.findIndex((cell) => normalizeDate(cell) !== null);
     amountIndex = sample.findIndex((cell, index) => index !== dateIndex && normalizeAmount(cell) !== null);
     descIndex = sample.findIndex((cell, index) => index !== dateIndex && index !== amountIndex && cell.length > 2);
@@ -146,9 +147,9 @@ export function StatementImport({ accounts, categories, costCenters, categoryPat
       if (!parsed.length) throw new Error("Não encontrei lançamentos nesse arquivo. Baixe o extrato em OFX ou CSV direto no aplicativo do banco.");
       const keys = parsed.map((row) => `${accountId}:${row.fitid ?? `${row.date}|${row.amount.toFixed(2)}|${row.description.slice(0, 40)}`}`);
       const { data: existing } = await supabase.from("transactions").select("external_id").in("external_id", keys);
-      const seen = new Set((existing ?? []).map((row) => row.external_id));
+      const seen = new Set((existing ?? []).map((row) => row.external_id as string | null));
       setRows(parsed.map((row, index) => {
-        const key = keys[index];
+        const key = keys[index] as string;
         const duplicate = seen.has(key);
         return { ...row, key, duplicate, selected: !duplicate, category_id: "", cost_center_id: "" };
       }));
