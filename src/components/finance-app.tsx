@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowRightLeft, Building2, ChevronRight, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Menu, Plus, Shapes, TrendingUp, WalletCards, X } from "lucide-react";
+import { ArrowRightLeft, Building2, FileUp, ChevronRight, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Menu, Plus, Shapes, TrendingUp, WalletCards, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { StatementImport } from "@/components/statement-import";
 import type { Database } from "@/integrations/supabase/types";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
@@ -15,7 +16,7 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
-type View = "dashboard" | "accounts" | "transactions" | "categories" | "cost_centers" | "assets";
+type View = "dashboard" | "accounts" | "transactions" | "import" | "categories" | "cost_centers" | "assets";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string; institution: string; account_type: string; initial_balance: string;
@@ -40,6 +41,7 @@ const nav = [
   { id: "dashboard" as const, label: "Visão geral", icon: LayoutDashboard },
   { id: "accounts" as const, label: "Contas", icon: WalletCards },
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
+  { id: "import" as const, label: "Importar extrato", icon: FileUp },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
@@ -161,11 +163,12 @@ export function FinanceApp() {
       </aside>
       {mobileOpen && <div className="fixed inset-0 z-30 bg-overlay md:hidden" onClick={() => setMobileOpen(false)} />}
       <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
-        <header className="mb-7 flex items-center justify-between"><div className="flex items-center gap-3"><Button variant="outline" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button><div><p className="text-xs font-medium uppercase text-muted-foreground">{name}</p><h1 className="font-display text-2xl font-semibold md:text-3xl">{nav.find((n) => n.id === view)?.label}</h1></div></div><Button onClick={() => open(view === "accounts" ? "account" : view === "categories" ? "category" : view === "assets" ? "asset" : view === "cost_centers" ? "cost_center" : "transaction")}><Plus />{view === "accounts" ? "Nova conta" : view === "categories" ? "Nova categoria" : view === "assets" ? "Novo item" : view === "cost_centers" ? "Novo centro de custo" : "Novo lançamento"}</Button></header>
+        <header className="mb-7 flex items-center justify-between"><div className="flex items-center gap-3"><Button variant="outline" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button><div><p className="text-xs font-medium uppercase text-muted-foreground">{name}</p><h1 className="font-display text-2xl font-semibold md:text-3xl">{nav.find((n) => n.id === view)?.label}</h1></div></div>{view !== "import" && <Button onClick={() => open(view === "accounts" ? "account" : view === "categories" ? "category" : view === "assets" ? "asset" : view === "cost_centers" ? "cost_center" : "transaction")}><Plus />{view === "accounts" ? "Nova conta" : view === "categories" ? "Nova categoria" : view === "assets" ? "Novo item" : view === "cost_centers" ? "Novo centro de custo" : "Novo lançamento"}</Button>}</header>
         {loading ? <div className="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">Carregando seu controle financeiro…</div> : <>
           {view === "dashboard" && <Dashboard totals={totals} chartData={chartData} transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} centerSummary={centerSummary} />}
           {view === "accounts" && <Accounts accounts={balanceByAccount} onAdd={() => open("account")} />}
           {view === "transactions" && <Transactions transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} onAdd={() => open("transaction")} />}
+          {view === "import" && <StatementImport accounts={accounts} categories={categories} costCenters={costCenters} categoryPath={categoryPath} onImported={load} />}
           {view === "categories" && <Categories categories={categories} onAdd={() => open("category")} />}
           {view === "cost_centers" && <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} />}
           {view === "assets" && <Assets assets={assets} totals={totals} onAdd={() => open("asset")} />}
