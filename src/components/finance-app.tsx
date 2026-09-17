@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
+import { getDailyRates } from "@/lib/rates.functions";
 import type { Database } from "@/integrations/supabase/types";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
@@ -114,34 +115,34 @@ export function FinanceApp() {
       const d = new Date(`${tx.transaction_date}T12:00:00`);
       return d.getMonth() === current.getMonth() && d.getFullYear() === current.getFullYear();
     });
-    const income = monthly.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0);
-    const expense = monthly.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+    const income = monthly.filter((t) => t.transaction_type === "income").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
+    const expense = monthly.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
     const assetTotal = assets.filter((a) => a.asset_type === "asset").reduce((s, a) => s + Number(a.value), 0);
     const liabilityTotal = assets.filter((a) => a.asset_type === "liability").reduce((s, a) => s + Number(a.value), 0);
-    return { income, expense, result: income - expense, balance: balanceByAccount.reduce((s, a) => s + a.balance, 0), assetTotal, liabilityTotal };
-  }, [transactions, assets, balanceByAccount]);
+    return { income, expense, result: income - expense, balance: balanceByAccount.reduce((s, a) => s + a.balanceBRL, 0), assetTotal, liabilityTotal };
+  }, [transactions, assets, balanceByAccount, rates, accountCurrency]);
 
   const chartData = useMemo(() => Array.from({ length: 6 }, (_, index) => {
     const date = new Date(); date.setMonth(date.getMonth() - (5 - index));
     const rows = transactions.filter((tx) => { const d = new Date(`${tx.transaction_date}T12:00:00`); return d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear(); });
-    return { month: date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), receita: rows.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0), despesa: rows.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0) };
-  }), [transactions]);
+    return { month: date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), receita: rows.filter((t) => t.transaction_type === "income").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0), despesa: rows.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0) };
+  }), [transactions, rates, accountCurrency]);
 
   const centerSummary = useMemo(() => {
     const rows = costCenters.map((center) => {
       const own = transactions.filter((t) => t.cost_center_id === center.id);
-      const income = own.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0);
-      const expense = own.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      const income = own.filter((t) => t.transaction_type === "income").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
+      const expense = own.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
       return { ...center, income, expense, result: income - expense, count: own.length };
     });
     const orphan = transactions.filter((t) => !t.cost_center_id && t.transaction_type !== "transfer");
     if (orphan.length) {
-      const income = orphan.filter((t) => t.transaction_type === "income").reduce((s, t) => s + Number(t.amount), 0);
-      const expense = orphan.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      const income = orphan.filter((t) => t.transaction_type === "income").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
+      const expense = orphan.filter((t) => t.transaction_type === "expense").reduce((s, t) => s + toBRL(Number(t.amount), t.account_id), 0);
       rows.push({ id: "none", user_id: "", name: "Sem centro de custo", center_type: "other", description: null, color: "orange", is_active: true, created_at: "", updated_at: "", income, expense, result: income - expense, count: orphan.length } as (typeof rows)[number]);
     }
     return rows.sort((a, b) => b.income + b.expense - (a.income + a.expense));
-  }, [costCenters, transactions]);
+  }, [costCenters, transactions, rates, accountCurrency]);
 
   function open(type: Exclude<Modal, null>) { setError(""); setForm(emptyForm()); setModal(type); }
   function field(key: keyof FormState) { return { value: form[key], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [key]: e.target.value })) }; }
