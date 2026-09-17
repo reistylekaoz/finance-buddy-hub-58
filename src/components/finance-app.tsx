@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { getDailyRates } from "@/lib/rates.functions";
 import type { Database } from "@/integrations/supabase/types";
-import lightLogo from "@/assets/fluxora-logo-light.png.asset.json";
+import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
@@ -171,7 +171,7 @@ export function FinanceApp() {
     <div className="flex min-h-screen">
       <aside className={cn("fixed inset-y-0 left-0 z-40 w-64 border-r border-border bg-sidebar p-4 transition-transform md:sticky md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
         <div className="flex items-center justify-between px-2 py-2"><img src={lightLogo.url} alt="Fluxora — Gestão financeira inteligente" className="h-auto w-40"/><Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(false)} aria-label="Fechar menu"><X /></Button></div>
-        <nav className="mt-7 space-y-1">{nav.map((item) => <Button key={item.id} variant={view === item.id ? "secondary" : "ghost"} className={cn("w-full justify-start", view === item.id && "text-primary")} onClick={() => { setView(item.id); setMobileOpen(false); }}><item.icon />{item.label}</Button>)}</nav>
+        <nav className="mt-7 space-y-1">{nav.map((item) => <Button key={item.id} variant={view === item.id ? "default" : "ghost"} className="w-full justify-start" onClick={() => { setView(item.id); setMobileOpen(false); }}><item.icon />{item.label}</Button>)}</nav>
         <div className="mt-8 border-t border-border pt-5"><p className="px-3 text-xs font-medium uppercase text-muted-foreground">Contas</p><div className="mt-2 space-y-1">{balanceByAccount.slice(0,4).map((a) => <div key={a.id} className="flex items-center justify-between px-3 py-2 text-xs"><span className="truncate">{a.name}</span><span className="font-mono tabular-nums">{formatCurrency(a.balance, a.currency)}</span></div>)}{!accounts.length && <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma conta cadastrada</p>}</div></div>
         <div className="absolute bottom-4 left-4 right-4"><div className="rounded-md bg-foreground p-4 text-background"><p className="text-xs opacity-70">Saldo consolidado</p><p className="mt-1 font-mono text-lg">{money.format(totals.balance)}</p></div><Button variant="ghost" className="mt-2 w-full justify-start text-muted-foreground" onClick={signOut}><LogOut />Sair</Button></div>
       </aside>
