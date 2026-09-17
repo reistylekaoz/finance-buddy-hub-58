@@ -6,4 +6,5 @@
 - [x] Implementar a versão aprovada
 - [x] Centros de custo por imóvel, plataforma e pessoal
 - [x] Importação de extrato OFX/CSV (Nubank, C6, Inter) com detecção de repetidos
+- [x] Contas em euro e dólar com conversão em reais pela cotação de D-1
 - [ ] Conexão automática via Open Finance (depende de conta em serviço como Pluggy ou Belvo)

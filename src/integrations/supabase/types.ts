@@ -19,6 +19,7 @@ export type Database = {
           account_type: Database["public"]["Enums"]["account_type"]
           color: string
           created_at: string
+          currency: string
           id: string
           initial_balance: number
           institution: string | null
@@ -31,6 +32,7 @@ export type Database = {
           account_type?: Database["public"]["Enums"]["account_type"]
           color?: string
           created_at?: string
+          currency?: string
           id?: string
           initial_balance?: number
           institution?: string | null
@@ -43,6 +45,7 @@ export type Database = {
           account_type?: Database["public"]["Enums"]["account_type"]
           color?: string
           created_at?: string
+          currency?: string
           id?: string
           initial_balance?: number
           institution?: string | null
