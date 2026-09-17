@@ -1,0 +1,257 @@
+import { useMemo, useRef, useState } from "react";
+import { FileUp, Loader2, Upload } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { Database } from "@/integrations/supabase/types";
+
+type Account = Database["public"]["Tables"]["accounts"]["Row"];
+type Category = Database["public"]["Tables"]["categories"]["Row"];
+type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+
+export type ParsedRow = {
+  key: string;
+  date: string;
+  description: string;
+  amount: number;
+  fitid: string | null;
+  selected: boolean;
+  duplicate: boolean;
+  category_id: string;
+  cost_center_id: string;
+};
+
+const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const selectClass = "h-9 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring";
+
+function normalizeDate(raw: string): string | null {
+  const value = raw.trim();
+  let match = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(value);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  match = /^(\d{2})[/\-.](\d{2})[/\-.](\d{4})/.exec(value);
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+  match = /^(\d{2})[/\-.](\d{2})[/\-.](\d{2})$/.exec(value);
+  if (match) return `20${match[3]}-${match[2]}-${match[1]}`;
+  return null;
+}
+
+function normalizeAmount(raw: string): number | null {
+  let value = raw.replace(/\s|R\$|"/g, "").trim();
+  if (!value) return null;
+  const negative = /^\(.*\)$/.test(value) || value.startsWith("-");
+  value = value.replace(/[()\-+]/g, "");
+  if (value.includes(",")) value = value.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return negative ? -parsed : parsed;
+}
+
+function parseOfx(text: string) {
+  const rows: { date: string; description: string; amount: number; fitid: string | null }[] = [];
+  const blocks = text.split(/<STMTTRN>/i).slice(1);
+  for (const block of blocks) {
+    const tag = (name: string) => {
+      const found = new RegExp(`<${name}>([^<\r\n]*)`, "i").exec(block);
+      return found ? found[1].trim() : "";
+    };
+    const date = normalizeDate(tag("DTPOSTED"));
+    const amount = normalizeAmount(tag("TRNAMT"));
+    if (!date || amount === null) continue;
+    const description = tag("MEMO") || tag("NAME") || tag("TRNTYPE") || "Lançamento importado";
+    rows.push({ date, description, amount, fitid: tag("FITID") || null });
+  }
+  return rows;
+}
+
+function splitCsvLine(line: string, delimiter: string) {
+  const out: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') { current += '"'; i += 1; } else quoted = !quoted;
+    } else if (char === delimiter && !quoted) { out.push(current); current = ""; } else current += char;
+  }
+  out.push(current);
+  return out.map((cell) => cell.trim());
+}
+
+function parseCsv(text: string) {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return [];
+  const delimiter = (lines[0].match(/;/g)?.length ?? 0) > (lines[0].match(/,/g)?.length ?? 0) ? ";" : ",";
+  const strip = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const header = splitCsvLine(lines[0], delimiter).map(strip);
+  const findIndex = (terms: string[]) => header.findIndex((cell) => terms.some((term) => cell.includes(term)));
+  let dateIndex = findIndex(["data", "date"]);
+  let amountIndex = findIndex(["valor", "amount", "montante"]);
+  let descIndex = findIndex(["descricao", "historico", "title", "lancamento", "memo", "estabelecimento"]);
+  const idIndex = findIndex(["identificador", "id"]);
+  const body = dateIndex >= 0 && amountIndex >= 0 ? lines.slice(1) : lines;
+  if (dateIndex < 0 || amountIndex < 0) {
+    const sample = splitCsvLine(lines[0], delimiter);
+    dateIndex = sample.findIndex((cell) => normalizeDate(cell) !== null);
+    amountIndex = sample.findIndex((cell, index) => index !== dateIndex && normalizeAmount(cell) !== null);
+    descIndex = sample.findIndex((cell, index) => index !== dateIndex && index !== amountIndex && cell.length > 2);
+  }
+  const rows: { date: string; description: string; amount: number; fitid: string | null }[] = [];
+  for (const line of body) {
+    const cells = splitCsvLine(line, delimiter);
+    const date = dateIndex >= 0 ? normalizeDate(cells[dateIndex] ?? "") : null;
+    const amount = amountIndex >= 0 ? normalizeAmount(cells[amountIndex] ?? "") : null;
+    if (!date || amount === null || amount === 0) continue;
+    rows.push({
+      date,
+      description: (descIndex >= 0 ? cells[descIndex] : "") || "Lançamento importado",
+      amount,
+      fitid: idIndex >= 0 ? cells[idIndex] || null : null,
+    });
+  }
+  return rows;
+}
+
+export function StatementImport({ accounts, categories, costCenters, categoryPath, onImported }: {
+  accounts: Account[];
+  categories: Category[];
+  costCenters: CostCenter[];
+  categoryPath: (id: string | null) => string;
+  onImported: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const totals = useMemo(() => {
+    const chosen = rows.filter((row) => row.selected);
+    return {
+      count: chosen.length,
+      income: chosen.filter((r) => r.amount > 0).reduce((sum, r) => sum + r.amount, 0),
+      expense: chosen.filter((r) => r.amount < 0).reduce((sum, r) => sum - r.amount, 0),
+      duplicates: rows.filter((r) => r.duplicate).length,
+    };
+  }, [rows]);
+
+  const handleFile = async (file: File) => {
+    setError(""); setMessage(""); setBusy(true);
+    try {
+      if (!accountId) throw new Error("Escolha primeiro em qual conta os lançamentos entram.");
+      const text = await file.text();
+      const isOfx = /\.ofx$/i.test(file.name) || /<STMTTRN>/i.test(text);
+      const parsed = isOfx ? parseOfx(text) : parseCsv(text);
+      if (!parsed.length) throw new Error("Não encontrei lançamentos nesse arquivo. Baixe o extrato em OFX ou CSV direto no aplicativo do banco.");
+      const keys = parsed.map((row) => `${accountId}:${row.fitid ?? `${row.date}|${row.amount.toFixed(2)}|${row.description.slice(0, 40)}`}`);
+      const { data: existing } = await supabase.from("transactions").select("external_id").in("external_id", keys);
+      const seen = new Set((existing ?? []).map((row) => row.external_id));
+      setRows(parsed.map((row, index) => {
+        const key = keys[index];
+        const duplicate = seen.has(key);
+        return { ...row, key, duplicate, selected: !duplicate, category_id: "", cost_center_id: "" };
+      }));
+      setFileName(file.name);
+    } catch (caught) {
+      setRows([]);
+      setError(caught instanceof Error ? caught.message : "Não consegui ler esse arquivo.");
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const patch = (key: string, next: Partial<ParsedRow>) => setRows((current) => current.map((row) => (row.key === key ? { ...row, ...next } : row)));
+  const applyAll = (field: "category_id" | "cost_center_id", value: string) => setRows((current) => current.map((row) => (row.selected ? { ...row, [field]: value } : row)));
+
+  const save = async () => {
+    setBusy(true); setError(""); setMessage("");
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    const chosen = rows.filter((row) => row.selected);
+    if (!userId || !chosen.length) { setBusy(false); return; }
+    const payload = chosen.map((row) => ({
+      user_id: userId,
+      transaction_type: (row.amount >= 0 ? "income" : "expense") as "income" | "expense",
+      account_id: accountId,
+      category_id: row.category_id || null,
+      cost_center_id: row.cost_center_id || null,
+      amount: Math.abs(row.amount),
+      transaction_date: row.date,
+      description: row.description.slice(0, 180),
+      external_id: row.key,
+      source: "import",
+    }));
+    const { error: saveError } = await supabase.from("transactions").insert(payload);
+    setBusy(false);
+    if (saveError) { setError(saveError.message); return; }
+    setRows([]); setFileName("");
+    setMessage(`${payload.length} lançamento${payload.length === 1 ? "" : "s"} importado${payload.length === 1 ? "" : "s"} com sucesso.`);
+    onImported();
+  };
+
+  if (!accounts.length) {
+    return <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">Cadastre uma conta antes de importar um extrato.</div>;
+  }
+
+  return <div className="space-y-4">
+    <section className="rounded-lg border border-border bg-card p-5">
+      <h2 className="font-semibold">Importar extrato do banco</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Baixe o extrato em OFX ou CSV no app do Nubank, C6 ou Inter e envie aqui. Lançamentos repetidos são identificados e ficam desmarcados.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <label className="space-y-1.5 text-sm">
+          <span className="text-xs font-medium uppercase text-muted-foreground">Conta de destino</span>
+          <select className={cn(selectClass, "h-10 text-sm")} value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+            {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select>
+        </label>
+        <Button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
+          {busy ? <Loader2 className="animate-spin" /> : <Upload />}Escolher arquivo
+        </Button>
+        <input ref={inputRef} type="file" accept=".ofx,.csv,.txt,text/csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleFile(file); }} />
+      </div>
+      {fileName && <p className="mt-3 text-xs text-muted-foreground">Arquivo: {fileName}</p>}
+      {error && <p className="mt-3 rounded-md bg-destructive-soft p-3 text-sm text-destructive">{error}</p>}
+      {message && <p className="mt-3 rounded-md bg-income-soft p-3 text-sm text-income">{message}</p>}
+    </section>
+
+    {rows.length > 0 && <section className="rounded-lg border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 className="font-semibold">{totals.count} de {rows.length} lançamentos selecionados</h2>
+          <p className="text-xs text-muted-foreground">Entradas {money.format(totals.income)} · Saídas {money.format(totals.expense)}{totals.duplicates ? ` · ${totals.duplicates} já existiam` : ""}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select className={selectClass} defaultValue="" onChange={(event) => applyAll("category_id", event.target.value)}>
+            <option value="">Aplicar categoria a todos</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{categoryPath(category.id)}</option>)}
+          </select>
+          <select className={selectClass} defaultValue="" onChange={(event) => applyAll("cost_center_id", event.target.value)}>
+            <option value="">Aplicar centro de custo a todos</option>
+            {costCenters.map((center) => <option key={center.id} value={center.id}>{center.name}</option>)}
+          </select>
+          <Button onClick={() => void save()} disabled={busy || !totals.count}>{busy ? <Loader2 className="animate-spin" /> : <FileUp />}Importar selecionados</Button>
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {rows.map((row) => <div key={row.key} className={cn("grid gap-3 px-5 py-3 sm:grid-cols-[auto_1fr_auto_170px_170px] sm:items-center", row.duplicate && "opacity-60")}>
+          <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={row.selected} onChange={(event) => patch(row.key, { selected: event.target.checked })} aria-label={`Selecionar ${row.description}`} />
+          <div>
+            <p className="text-sm font-medium">{row.description}</p>
+            <p className="text-xs text-muted-foreground">{row.date.split("-").reverse().join("/")}{row.duplicate ? " · já importado antes" : ""}</p>
+          </div>
+          <span className={cn("font-mono text-sm tabular-nums", row.amount >= 0 ? "text-income" : "text-expense")}>{money.format(row.amount)}</span>
+          <select className={selectClass} value={row.category_id} onChange={(event) => patch(row.key, { category_id: event.target.value })}>
+            <option value="">Sem categoria</option>
+            {categories.filter((category) => category.category_type === (row.amount >= 0 ? "income" : "expense")).map((category) => <option key={category.id} value={category.id}>{categoryPath(category.id)}</option>)}
+          </select>
+          <select className={selectClass} value={row.cost_center_id} onChange={(event) => patch(row.key, { cost_center_id: event.target.value })}>
+            <option value="">Sem centro de custo</option>
+            {costCenters.map((center) => <option key={center.id} value={center.id}>{center.name}</option>)}
+          </select>
+        </div>)}
+      </div>
+    </section>}
+  </div>;
+}
