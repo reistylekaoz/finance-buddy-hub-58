@@ -6,8 +6,8 @@ import { lovable } from "@/integrations/lovable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import lightLogo from "@/assets/fluxora-logo-light.png.asset.json";
-import darkLogo from "@/assets/fluxora-logo-dark.png.asset.json";
+import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
+import darkLogo from "@/assets/fluxora-logo-dark-transparent.png.asset.json";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Acesso | Fluxora" }, { name: "description", content: "Entre no Fluxora para organizar suas contas e seu patrimônio." }, { property: "og:title", content: "Acesso | Fluxora" }, { property: "og:description", content: "Gestão financeira pessoal simples e segura." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary" }] }),
