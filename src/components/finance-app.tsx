@@ -221,13 +221,13 @@ export function FinanceApp() {
       <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
         <header className="mb-7 flex items-center justify-between"><div className="flex items-center gap-3"><Button variant="outline" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button><div><p className="text-xs font-medium uppercase text-muted-foreground">{name}</p><h1 className="font-display text-2xl font-semibold md:text-3xl">{nav.find((n) => n.id === view)?.label}</h1></div></div>{view !== "import" && <Button onClick={() => open(view === "accounts" ? "account" : view === "categories" ? "category" : view === "assets" ? "asset" : view === "cost_centers" ? "cost_center" : "transaction")}><Plus />{view === "accounts" ? "Nova conta" : view === "categories" ? "Nova categoria" : view === "assets" ? "Novo item" : view === "cost_centers" ? "Novo centro de custo" : "Novo lançamento"}</Button>}</header>
         {loading ? <div className="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">Carregando seu controle financeiro…</div> : <>
-          {view === "dashboard" && <Dashboard totals={totals} chartDataByCurrency={chartDataByCurrency} transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} centerSummary={centerSummary} />}
-          {view === "accounts" && <Accounts accounts={balanceByAccount} onAdd={() => open("account")} rateDate={rateDate} />}
-          {view === "transactions" && <Transactions transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} onAdd={() => open("transaction")} />}
+          {view === "dashboard" && <Dashboard totals={totals} chartDataByCurrency={chartDataByCurrency} transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} centerSummary={centerSummary} onEditTx={(tx: Transaction) => edit("transaction", tx)} onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)} />}
+          {view === "accounts" && <Accounts accounts={balanceByAccount} onAdd={() => open("account")} rateDate={rateDate} onEdit={(a: Account) => edit("account", a)} onDelete={(a: Account) => remove("account", a.id, a.name)} />}
+          {view === "transactions" && <Transactions transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} onAdd={() => open("transaction")} onEditTx={(tx: Transaction) => edit("transaction", tx)} onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)} />}
           {view === "import" && <StatementImport accounts={accounts} categories={categories} costCenters={costCenters} categoryPath={categoryPath} onImported={load} />}
-          {view === "categories" && <Categories categories={categories} onAdd={() => open("category")} />}
-          {view === "cost_centers" && <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} />}
-          {view === "assets" && <Assets assets={assets} totals={totals} onAdd={() => open("asset")} />}
+          {view === "categories" && <Categories categories={categories} onAdd={() => open("category")} onEdit={(c: Category) => edit("category", c)} onDelete={(c: Category) => remove("category", c.id, c.name)} />}
+          {view === "cost_centers" && <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} onEdit={(c: CostCenter) => edit("cost_center", c)} onDelete={(c: CostCenter) => remove("cost_center", c.id, c.name)} />}
+          {view === "assets" && <Assets assets={assets} totals={totals} onAdd={() => open("asset")} onEdit={(a: Asset) => edit("asset", a)} onDelete={(a: Asset) => remove("asset", a.id, a.name)} />}
         </>}
       </main>
     </div>
