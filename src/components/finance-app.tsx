@@ -161,12 +161,13 @@ export function FinanceApp() {
       </aside>
       {mobileOpen && <div className="fixed inset-0 z-30 bg-overlay md:hidden" onClick={() => setMobileOpen(false)} />}
       <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
-        <header className="mb-7 flex items-center justify-between"><div className="flex items-center gap-3"><Button variant="outline" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button><div><p className="text-xs font-medium uppercase text-muted-foreground">{name}</p><h1 className="font-display text-2xl font-semibold md:text-3xl">{nav.find((n) => n.id === view)?.label}</h1></div></div><Button onClick={() => open(view === "accounts" ? "account" : view === "categories" ? "category" : view === "assets" ? "asset" : "transaction")}><Plus />{view === "accounts" ? "Nova conta" : view === "categories" ? "Nova categoria" : view === "assets" ? "Novo item" : "Novo lançamento"}</Button></header>
+        <header className="mb-7 flex items-center justify-between"><div className="flex items-center gap-3"><Button variant="outline" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu /></Button><div><p className="text-xs font-medium uppercase text-muted-foreground">{name}</p><h1 className="font-display text-2xl font-semibold md:text-3xl">{nav.find((n) => n.id === view)?.label}</h1></div></div><Button onClick={() => open(view === "accounts" ? "account" : view === "categories" ? "category" : view === "assets" ? "asset" : view === "cost_centers" ? "cost_center" : "transaction")}><Plus />{view === "accounts" ? "Nova conta" : view === "categories" ? "Nova categoria" : view === "assets" ? "Novo item" : view === "cost_centers" ? "Novo centro de custo" : "Novo lançamento"}</Button></header>
         {loading ? <div className="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">Carregando seu controle financeiro…</div> : <>
-          {view === "dashboard" && <Dashboard totals={totals} chartData={chartData} transactions={transactions} accounts={accounts} categoryPath={categoryPath} />}
+          {view === "dashboard" && <Dashboard totals={totals} chartData={chartData} transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} centerSummary={centerSummary} />}
           {view === "accounts" && <Accounts accounts={balanceByAccount} onAdd={() => open("account")} />}
-          {view === "transactions" && <Transactions transactions={transactions} accounts={accounts} categoryPath={categoryPath} onAdd={() => open("transaction")} />}
+          {view === "transactions" && <Transactions transactions={transactions} accounts={accounts} categoryPath={categoryPath} centerName={centerName} onAdd={() => open("transaction")} />}
           {view === "categories" && <Categories categories={categories} onAdd={() => open("category")} />}
+          {view === "cost_centers" && <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} />}
           {view === "assets" && <Assets assets={assets} totals={totals} onAdd={() => open("asset")} />}
         </>}
       </main>
