@@ -87,6 +87,14 @@ export function FinanceApp() {
 
   useEffect(() => { void load(); }, []);
 
+  const [rates, setRates] = useState<Record<string, number>>({ BRL: 1 });
+  const [rateDate, setRateDate] = useState("");
+  useEffect(() => { void (async () => { try { const data = await getDailyRates(); setRates({ BRL: 1, ...data.rates }); setRateDate(data.date); } catch { /* mantém somente o real */ } })(); }, []);
+
+  const accountCurrency = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.currency || "BRL"])) as Record<string, string>, [accounts]);
+  const rateOf = (currency: string) => rates[currency] ?? 1;
+  const toBRL = (amount: number, accountId: string | null) => amount * rateOf(accountId ? (accountCurrency[accountId] ?? "BRL") : "BRL");
+
   const balanceByAccount = useMemo(() => accounts.map((account) => {
     const delta = transactions.reduce((sum, tx) => {
       if (tx.transaction_type === "income" && tx.account_id === account.id) return sum + Number(tx.amount);
@@ -95,8 +103,10 @@ export function FinanceApp() {
       if (tx.transaction_type === "transfer" && tx.destination_account_id === account.id) return sum + Number(tx.amount);
       return sum;
     }, 0);
-    return { ...account, balance: Number(account.initial_balance) + delta };
-  }), [accounts, transactions]);
+    const balance = Number(account.initial_balance) + delta;
+    const currency = account.currency || "BRL";
+    return { ...account, balance, currency, balanceBRL: balance * rateOf(currency) };
+  }), [accounts, transactions, rates]);
 
   const totals = useMemo(() => {
     const current = new Date();
