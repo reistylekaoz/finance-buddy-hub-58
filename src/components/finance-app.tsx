@@ -166,7 +166,24 @@ export function FinanceApp() {
     return rows.sort((a, b) => b.count - a.count);
   }, [costCenters, transactions, accountCurrency]);
 
-  function open(type: Exclude<Modal, null>) { setError(""); setForm(emptyForm()); setModal(type); }
+  const [editingId, setEditingId] = useState<string | null>(null);
+  function open(type: Exclude<Modal, null>) { setError(""); setForm(emptyForm()); setEditingId(null); setModal(type); }
+  function edit(type: Exclude<Modal, null>, row: any) {
+    setError(""); setEditingId(row.id);
+    const base = emptyForm();
+    if (type === "account") setForm({ ...base, name: row.name, institution: row.institution ?? "", account_type: row.account_type, currency: row.currency || "BRL", initial_balance: String(row.initial_balance ?? "") });
+    else if (type === "category") setForm({ ...base, name: row.name, category_type: row.category_type, parent_id: row.parent_id ?? "" });
+    else if (type === "asset") setForm({ ...base, name: row.name, asset_type: row.asset_type, asset_class: row.asset_class, value: String(row.value ?? ""), notes: row.notes ?? "" });
+    else if (type === "cost_center") setForm({ ...base, name: row.name, center_type: row.center_type, description: row.description ?? "" });
+    else setForm({ ...base, transaction_type: row.transaction_type, account_id: row.account_id, destination_account_id: row.destination_account_id ?? "", category_id: row.category_id ?? "", cost_center_id: row.cost_center_id ?? "", amount: String(row.amount ?? ""), transaction_date: row.transaction_date, description: row.description, notes: row.notes ?? "" });
+    setModal(type);
+  }
+  const tableOf: Record<Exclude<Modal, null>, "accounts" | "categories" | "assets" | "cost_centers" | "transactions"> = { account: "accounts", category: "categories", asset: "assets", cost_center: "cost_centers", transaction: "transactions" };
+  async function remove(type: Exclude<Modal, null>, id: string, label: string) {
+    if (!window.confirm(`Excluir "${label}"? Essa ação não pode ser desfeita.`)) return;
+    const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
+    if (delError) window.alert(`Não foi possível excluir: ${delError.message}`); else await load();
+  }
   function field(key: keyof FormState) { return { value: form[key], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [key]: e.target.value })) }; }
 
   async function save(e: React.FormEvent) {
