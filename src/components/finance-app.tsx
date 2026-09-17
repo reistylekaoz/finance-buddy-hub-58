@@ -149,6 +149,7 @@ export function FinanceApp() {
 
   async function signOut() { await supabase.auth.signOut(); navigate({ to: "/auth", replace: true }); }
   const categoryPath = (id: string | null): string => { if (!id) return "Sem categoria"; const c = categories.find((item) => item.id === id); if (!c) return "Sem categoria"; return c.parent_id ? `${categoryPath(c.parent_id)} › ${c.name}` : c.name; };
+  const centerName = (id: string | null): string => costCenters.find((c) => c.id === id)?.name ?? "Sem centro de custo";
 
   return <div className="min-h-screen bg-background text-foreground">
     <div className="flex min-h-screen">
