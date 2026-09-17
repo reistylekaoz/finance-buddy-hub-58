@@ -221,11 +221,11 @@ function Dashboard({ totals, chartDataByCurrency, transactions, accounts, catego
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Metric label="Saldo total" value={totals.balance} />
-      {totals.byCurrency.map((c: any) => <>
-        <Metric key={`${c.currency}-inc`} label={`Receitas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.income} tone="positive" currency={c.currency} />
-        <Metric key={`${c.currency}-exp`} label={`Despesas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.expense} tone="negative" currency={c.currency} />
-        <Metric key={`${c.currency}-res`} label={`Resultado do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.result} tone={c.result >= 0 ? "positive" : "negative"} currency={c.currency} />
-      </>)}
+      {totals.byCurrency.map((c: any) => <div key={c.currency} className="contents">
+        <Metric label={`Receitas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.income} tone="positive" currency={c.currency} />
+        <Metric label={`Despesas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.expense} tone="negative" currency={c.currency} />
+        <Metric label={`Resultado do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`} value={c.result} tone={c.result >= 0 ? "positive" : "negative"} currency={c.currency} />
+      </div>)}
     </div>
     {chartDataByCurrency.map((cd: any) => <div key={cd.currency} className="grid gap-4 xl:grid-cols-5">
       <section className="rounded-lg border border-border bg-card p-5 xl:col-span-3">
@@ -260,11 +260,11 @@ function CostCenters({ rows, onAdd }: any) {
   const allCurrencies: string[] = Array.from(new Set<string>(rows.flatMap((r: any) => r.currencies as string[]))).sort((a: string, b: string) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
   const totalsByCurrency = allCurrencies.map((c) => ({ currency: c, income: rows.reduce((s: number, r: any) => s + (r.income[c] ?? 0), 0), expense: rows.reduce((s: number, r: any) => s + (r.expense[c] ?? 0), 0) }));
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-3">{totalsByCurrency.map((t) => <>
-      <Metric key={`${t.currency}-inc`} label={`Receitas alocadas${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.income} tone="positive" currency={t.currency}/>
-      <Metric key={`${t.currency}-exp`} label={`Despesas alocadas${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.expense} tone="negative" currency={t.currency}/>
-      <Metric key={`${t.currency}-res`} label={`Resultado${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.income - t.expense} tone={(t.income - t.expense) >= 0 ? "positive" : "negative"} currency={t.currency}/>
-    </>)}</div>
+    <div className="grid gap-3 sm:grid-cols-3">{totalsByCurrency.map((t) => <div key={t.currency} className="contents">
+      <Metric label={`Receitas alocadas${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.income} tone="positive" currency={t.currency}/>
+      <Metric label={`Despesas alocadas${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.expense} tone="negative" currency={t.currency}/>
+      <Metric label={`Resultado${t.currency !== "BRL" ? ` (${t.currency})` : ""}`} value={t.income - t.expense} tone={(t.income - t.expense) >= 0 ? "positive" : "negative"} currency={t.currency}/>
+    </div>)}</div>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{rows.map((r:any)=><div key={r.id} className="rounded-lg border border-border bg-card p-5">
       <div className="flex items-start justify-between"><div className="grid size-10 place-items-center rounded-md bg-primary-soft text-primary"><Building2/></div><span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">{centerTypeLabel[r.center_type] ?? "Outro"}</span></div>
       <h2 className="mt-5 font-semibold">{r.name}</h2><p className="text-xs text-muted-foreground">{r.description || `${r.count} lançamento${r.count===1?"":"s"}`}</p>
