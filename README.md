@@ -2,43 +2,17 @@
 
 Crie um sistema de gestão financeira pessoal.
 
-
-
 O Aplicativo deve conter:
-
-
-
-
 
 Gestão de multiplas contas bancárias com integração via OFX ou open finance
 
-
-
-
-
 Gestão de receitas, despesas e transferência entre contas.
-
-
-
-
 
 Categorização de receita e despesas com multiplos nivel (Grupo, subgrupo, e assim vai)
 
-
-
-
-
 Controle de patrimonio com balanço patrimonial
 
-
-
-
-
 Dashboard com receita x despesa, fluxo de caixa
-
-
-
-
 
 Se possível no futuro ser possível lançar ou categorizar via whatsapp através de agente virtual
 

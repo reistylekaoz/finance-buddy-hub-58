@@ -1,417 +1,405 @@
-export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Json | undefined }
-  | Json[]
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
+    PostgrestVersion: "14.5";
+  };
   public: {
     Tables: {
       accounts: {
         Row: {
-          account_type: Database["public"]["Enums"]["account_type"]
-          color: string
-          created_at: string
-          currency: string
-          id: string
-          initial_balance: number
-          institution: string | null
-          is_active: boolean
-          name: string
-          updated_at: string
-          user_id: string
-        }
+          account_type: Database["public"]["Enums"]["account_type"];
+          color: string;
+          created_at: string;
+          currency: string;
+          id: string;
+          initial_balance: number;
+          institution: string | null;
+          is_active: boolean;
+          name: string;
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          account_type?: Database["public"]["Enums"]["account_type"]
-          color?: string
-          created_at?: string
-          currency?: string
-          id?: string
-          initial_balance?: number
-          institution?: string | null
-          is_active?: boolean
-          name: string
-          updated_at?: string
-          user_id: string
-        }
+          account_type?: Database["public"]["Enums"]["account_type"];
+          color?: string;
+          created_at?: string;
+          currency?: string;
+          id?: string;
+          initial_balance?: number;
+          institution?: string | null;
+          is_active?: boolean;
+          name: string;
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          account_type?: Database["public"]["Enums"]["account_type"]
-          color?: string
-          created_at?: string
-          currency?: string
-          id?: string
-          initial_balance?: number
-          institution?: string | null
-          is_active?: boolean
-          name?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
+          account_type?: Database["public"]["Enums"]["account_type"];
+          color?: string;
+          created_at?: string;
+          currency?: string;
+          id?: string;
+          initial_balance?: number;
+          institution?: string | null;
+          is_active?: boolean;
+          name?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
-          asset_class: string
-          asset_type: Database["public"]["Enums"]["asset_type"]
-          created_at: string
-          id: string
-          name: string
-          notes: string | null
-          updated_at: string
-          user_id: string
-          value: number
-        }
+          asset_class: string;
+          asset_type: Database["public"]["Enums"]["asset_type"];
+          created_at: string;
+          id: string;
+          name: string;
+          notes: string | null;
+          updated_at: string;
+          user_id: string;
+          value: number;
+        };
         Insert: {
-          asset_class: string
-          asset_type: Database["public"]["Enums"]["asset_type"]
-          created_at?: string
-          id?: string
-          name: string
-          notes?: string | null
-          updated_at?: string
-          user_id: string
-          value?: number
-        }
+          asset_class: string;
+          asset_type: Database["public"]["Enums"]["asset_type"];
+          created_at?: string;
+          id?: string;
+          name: string;
+          notes?: string | null;
+          updated_at?: string;
+          user_id: string;
+          value?: number;
+        };
         Update: {
-          asset_class?: string
-          asset_type?: Database["public"]["Enums"]["asset_type"]
-          created_at?: string
-          id?: string
-          name?: string
-          notes?: string | null
-          updated_at?: string
-          user_id?: string
-          value?: number
-        }
-        Relationships: []
-      }
+          asset_class?: string;
+          asset_type?: Database["public"]["Enums"]["asset_type"];
+          created_at?: string;
+          id?: string;
+          name?: string;
+          notes?: string | null;
+          updated_at?: string;
+          user_id?: string;
+          value?: number;
+        };
+        Relationships: [];
+      };
       categories: {
         Row: {
-          category_type: Database["public"]["Enums"]["category_type"]
-          color: string
-          created_at: string
-          id: string
-          name: string
-          parent_id: string | null
-          updated_at: string
-          user_id: string
-        }
+          category_type: Database["public"]["Enums"]["category_type"];
+          color: string;
+          created_at: string;
+          id: string;
+          name: string;
+          parent_id: string | null;
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          category_type: Database["public"]["Enums"]["category_type"]
-          color?: string
-          created_at?: string
-          id?: string
-          name: string
-          parent_id?: string | null
-          updated_at?: string
-          user_id: string
-        }
+          category_type: Database["public"]["Enums"]["category_type"];
+          color?: string;
+          created_at?: string;
+          id?: string;
+          name: string;
+          parent_id?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          category_type?: Database["public"]["Enums"]["category_type"]
-          color?: string
-          created_at?: string
-          id?: string
-          name?: string
-          parent_id?: string | null
-          updated_at?: string
-          user_id?: string
-        }
+          category_type?: Database["public"]["Enums"]["category_type"];
+          color?: string;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          parent_id?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
         Relationships: [
           {
-            foreignKeyName: "categories_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "categories"
-            referencedColumns: ["id"]
+            foreignKeyName: "categories_parent_id_fkey";
+            columns: ["parent_id"];
+            isOneToOne: false;
+            referencedRelation: "categories";
+            referencedColumns: ["id"];
           },
-        ]
-      }
+        ];
+      };
       cost_centers: {
         Row: {
-          center_type: Database["public"]["Enums"]["cost_center_type"]
-          color: string
-          created_at: string
-          description: string | null
-          id: string
-          is_active: boolean
-          name: string
-          updated_at: string
-          user_id: string
-        }
+          center_type: Database["public"]["Enums"]["cost_center_type"];
+          color: string;
+          created_at: string;
+          description: string | null;
+          id: string;
+          is_active: boolean;
+          name: string;
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          center_type?: Database["public"]["Enums"]["cost_center_type"]
-          color?: string
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          name: string
-          updated_at?: string
-          user_id: string
-        }
+          center_type?: Database["public"]["Enums"]["cost_center_type"];
+          color?: string;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          is_active?: boolean;
+          name: string;
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          center_type?: Database["public"]["Enums"]["cost_center_type"]
-          color?: string
-          created_at?: string
-          description?: string | null
-          id?: string
-          is_active?: boolean
-          name?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
+          center_type?: Database["public"]["Enums"]["cost_center_type"];
+          color?: string;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          is_active?: boolean;
+          name?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       profiles: {
         Row: {
-          created_at: string
-          display_name: string
-          id: string
-          preferred_currency: string
-          updated_at: string
-        }
+          created_at: string;
+          display_name: string;
+          id: string;
+          preferred_currency: string;
+          updated_at: string;
+        };
         Insert: {
-          created_at?: string
-          display_name?: string
-          id: string
-          preferred_currency?: string
-          updated_at?: string
-        }
+          created_at?: string;
+          display_name?: string;
+          id: string;
+          preferred_currency?: string;
+          updated_at?: string;
+        };
         Update: {
-          created_at?: string
-          display_name?: string
-          id?: string
-          preferred_currency?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
+          created_at?: string;
+          display_name?: string;
+          id?: string;
+          preferred_currency?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       transactions: {
         Row: {
-          account_id: string
-          amount: number
-          category_id: string | null
-          cost_center_id: string | null
-          created_at: string
-          description: string
-          destination_account_id: string | null
-          external_id: string | null
-          id: string
-          notes: string | null
-          source: string
-          transaction_date: string
-          transaction_type: Database["public"]["Enums"]["transaction_type"]
-          updated_at: string
-          user_id: string
-        }
+          account_id: string;
+          amount: number;
+          category_id: string | null;
+          cost_center_id: string | null;
+          created_at: string;
+          description: string;
+          destination_account_id: string | null;
+          external_id: string | null;
+          id: string;
+          notes: string | null;
+          source: string;
+          transaction_date: string;
+          transaction_type: Database["public"]["Enums"]["transaction_type"];
+          updated_at: string;
+          user_id: string;
+        };
         Insert: {
-          account_id: string
-          amount: number
-          category_id?: string | null
-          cost_center_id?: string | null
-          created_at?: string
-          description: string
-          destination_account_id?: string | null
-          external_id?: string | null
-          id?: string
-          notes?: string | null
-          source?: string
-          transaction_date?: string
-          transaction_type: Database["public"]["Enums"]["transaction_type"]
-          updated_at?: string
-          user_id: string
-        }
+          account_id: string;
+          amount: number;
+          category_id?: string | null;
+          cost_center_id?: string | null;
+          created_at?: string;
+          description: string;
+          destination_account_id?: string | null;
+          external_id?: string | null;
+          id?: string;
+          notes?: string | null;
+          source?: string;
+          transaction_date?: string;
+          transaction_type: Database["public"]["Enums"]["transaction_type"];
+          updated_at?: string;
+          user_id: string;
+        };
         Update: {
-          account_id?: string
-          amount?: number
-          category_id?: string | null
-          cost_center_id?: string | null
-          created_at?: string
-          description?: string
-          destination_account_id?: string | null
-          external_id?: string | null
-          id?: string
-          notes?: string | null
-          source?: string
-          transaction_date?: string
-          transaction_type?: Database["public"]["Enums"]["transaction_type"]
-          updated_at?: string
-          user_id?: string
-        }
+          account_id?: string;
+          amount?: number;
+          category_id?: string | null;
+          cost_center_id?: string | null;
+          created_at?: string;
+          description?: string;
+          destination_account_id?: string | null;
+          external_id?: string | null;
+          id?: string;
+          notes?: string | null;
+          source?: string;
+          transaction_date?: string;
+          transaction_type?: Database["public"]["Enums"]["transaction_type"];
+          updated_at?: string;
+          user_id?: string;
+        };
         Relationships: [
           {
-            foreignKeyName: "transactions_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
+            foreignKeyName: "transactions_account_id_fkey";
+            columns: ["account_id"];
+            isOneToOne: false;
+            referencedRelation: "accounts";
+            referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "transactions_category_id_fkey"
-            columns: ["category_id"]
-            isOneToOne: false
-            referencedRelation: "categories"
-            referencedColumns: ["id"]
+            foreignKeyName: "transactions_category_id_fkey";
+            columns: ["category_id"];
+            isOneToOne: false;
+            referencedRelation: "categories";
+            referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "transactions_cost_center_id_fkey"
-            columns: ["cost_center_id"]
-            isOneToOne: false
-            referencedRelation: "cost_centers"
-            referencedColumns: ["id"]
+            foreignKeyName: "transactions_cost_center_id_fkey";
+            columns: ["cost_center_id"];
+            isOneToOne: false;
+            referencedRelation: "cost_centers";
+            referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "transactions_destination_account_id_fkey"
-            columns: ["destination_account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
+            foreignKeyName: "transactions_destination_account_id_fkey";
+            columns: ["destination_account_id"];
+            isOneToOne: false;
+            referencedRelation: "accounts";
+            referencedColumns: ["id"];
           },
-        ]
-      }
-    }
+        ];
+      };
+    };
     Views: {
-      [_ in never]: never
-    }
+      [_ in never]: never;
+    };
     Functions: {
-      [_ in never]: never
-    }
+      [_ in never]: never;
+    };
     Enums: {
-      account_type: "checking" | "savings" | "cash" | "investment" | "credit"
-      asset_type: "asset" | "liability"
-      category_type: "income" | "expense"
-      cost_center_type: "property" | "business" | "personal" | "other"
-      transaction_type: "income" | "expense" | "transfer"
-    }
+      account_type: "checking" | "savings" | "cash" | "investment" | "credit";
+      asset_type: "asset" | "liability";
+      category_type: "income" | "expense";
+      cost_center_type: "property" | "business" | "personal" | "other";
+      transaction_type: "income" | "expense" | "transfer";
+    };
     CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-}
+      [_ in never]: never;
+    };
+  };
+};
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">;
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">];
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
       DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R
+      Row: infer R;
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] & DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R;
       }
       ? R
       : never
-    : never
+    : never;
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
+      Insert: infer I;
     }
     ? I
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
+        Insert: infer I;
       }
       ? I
       : never
-    : never
+    : never;
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
   TableName extends (DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
+      Update: infer U;
     }
     ? U
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
+        Update: infer U;
       }
       ? U
       : never
-    : never
+    : never;
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
   EnumName extends (DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
     : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
     ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+    : never;
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
+    keyof DefaultSchema["CompositeTypes"] | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
     : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof DatabaseWithoutInternals;
 }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
+    : never;
 
 export const Constants = {
   public: {
@@ -423,4 +411,4 @@ export const Constants = {
       transaction_type: ["income", "expense", "transfer"],
     },
   },
-} as const
+} as const;
