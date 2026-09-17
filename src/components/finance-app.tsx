@@ -59,22 +59,25 @@ export function FinanceApp() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
 
   async function load() {
     setLoading(true);
-    const [profile, accountRows, categoryRows, transactionRows, assetRows] = await Promise.all([
+    const [profile, accountRows, categoryRows, transactionRows, assetRows, centerRows] = await Promise.all([
       supabase.from("profiles").select("display_name").maybeSingle(),
       supabase.from("accounts").select("*").order("created_at"),
       supabase.from("categories").select("*").order("name"),
       supabase.from("transactions").select("*").order("transaction_date", { ascending: false }),
       supabase.from("assets").select("*").order("created_at", { ascending: false }),
+      supabase.from("cost_centers").select("*").order("name"),
     ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
     setCategories(categoryRows.data ?? []);
     setTransactions(transactionRows.data ?? []);
     setAssets(assetRows.data ?? []);
+    setCostCenters(centerRows.data ?? []);
     setLoading(false);
   }
 
