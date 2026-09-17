@@ -192,12 +192,16 @@ export function FinanceApp() {
     const userId = userData.user?.id;
     if (!userId || !modal) { setError("Sua sessão expirou. Entre novamente."); setSaving(false); return; }
     let result: { error: { message: string } | null };
-    if (modal === "account") result = await supabase.from("accounts").insert({ user_id: userId, name: form.name, institution: form.institution || null, account_type: form.account_type as Account["account_type"], currency: form.currency, initial_balance: Number(form.initial_balance || 0) });
-    else if (modal === "category") result = await supabase.from("categories").insert({ user_id: userId, name: form.name, category_type: form.category_type as Category["category_type"], parent_id: form.parent_id || null });
-    else if (modal === "asset") result = await supabase.from("assets").insert({ user_id: userId, name: form.name, asset_type: form.asset_type as Asset["asset_type"], asset_class: form.asset_class, value: Number(form.value || 0), notes: form.notes || null });
-    else if (modal === "cost_center") result = await supabase.from("cost_centers").insert({ user_id: userId, name: form.name, center_type: form.center_type as CostCenter["center_type"], description: form.description || null });
-    else result = await supabase.from("transactions").insert({ user_id: userId, transaction_type: form.transaction_type as Transaction["transaction_type"], account_id: form.account_id, destination_account_id: form.transaction_type === "transfer" ? form.destination_account_id : null, category_id: form.transaction_type === "transfer" ? null : (form.category_id || null), cost_center_id: form.cost_center_id || null, amount: Number(form.amount), transaction_date: form.transaction_date, description: form.description, notes: form.notes || null });
-    if (result.error) setError(result.error.message); else { setModal(null); await load(); }
+    const payload: Record<string, unknown> =
+      modal === "account" ? { name: form.name, institution: form.institution || null, account_type: form.account_type, currency: form.currency, initial_balance: Number(form.initial_balance || 0) }
+      : modal === "category" ? { name: form.name, category_type: form.category_type, parent_id: form.parent_id || null }
+      : modal === "asset" ? { name: form.name, asset_type: form.asset_type, asset_class: form.asset_class, value: Number(form.value || 0), notes: form.notes || null }
+      : modal === "cost_center" ? { name: form.name, center_type: form.center_type, description: form.description || null }
+      : { transaction_type: form.transaction_type, account_id: form.account_id, destination_account_id: form.transaction_type === "transfer" ? form.destination_account_id : null, category_id: form.transaction_type === "transfer" ? null : (form.category_id || null), cost_center_id: form.transaction_type === "transfer" ? null : (form.cost_center_id || null), amount: Number(form.amount), transaction_date: form.transaction_date, description: form.description, notes: form.notes || null };
+    const table = tableOf[modal];
+    if (editingId) result = await (supabase.from(table) as any).update(payload).eq("id", editingId);
+    else result = await (supabase.from(table) as any).insert({ user_id: userId, ...payload });
+    if (result.error) setError(result.error.message); else { setModal(null); setEditingId(null); await load(); }
     setSaving(false);
   }
 
