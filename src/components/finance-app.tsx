@@ -21,8 +21,10 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Pencil,
   Plus,
   Shapes,
+  Trash2,
   TrendingUp,
   WalletCards,
   X,
@@ -132,6 +134,7 @@ export function FinanceApp() {
   const navigate = useNavigate();
   const [view, setView] = useState<View>("dashboard");
   const [modal, setModal] = useState<Modal>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -334,10 +337,29 @@ export function FinanceApp() {
     return rows.sort((a, b) => b.count - a.count);
   }, [costCenters, transactions, accountCurrency]);
 
-  function open(type: Exclude<Modal, null>) {
+  function open(type: Exclude<Modal, null>, editing?: { id: string; values: Partial<FormState> }) {
     setError("");
-    setForm(emptyForm());
+    setEditingId(editing?.id ?? null);
+    setForm({ ...emptyForm(), ...(editing?.values ?? {}) });
     setModal(type);
+  }
+  function editAsset(asset: Asset) {
+    open("asset", {
+      id: asset.id,
+      values: {
+        name: asset.name,
+        asset_type: asset.asset_type,
+        asset_class: asset.asset_class,
+        value: String(asset.value),
+        notes: asset.notes ?? "",
+      },
+    });
+  }
+  async function deleteAsset(asset: Asset) {
+    if (!window.confirm(`Excluir "${asset.name}"? Essa ação não pode ser desfeita.`)) return;
+    const { error: deleteError } = await supabase.from("assets").delete().eq("id", asset.id);
+    if (deleteError) setError(deleteError.message);
+    else await load();
   }
   function field(key: keyof FormState) {
     return {
@@ -360,64 +382,57 @@ export function FinanceApp() {
     }
     let result: { error: { message: string } | null };
     if (modal === "account")
-      result = await supabase
-        .from("accounts")
-        .insert({
-          user_id: userId,
-          name: form.name,
-          institution: form.institution || null,
-          account_type: form.account_type as Account["account_type"],
-          currency: form.currency,
-          initial_balance: Number(form.initial_balance || 0),
-        });
+      result = await supabase.from("accounts").insert({
+        user_id: userId,
+        name: form.name,
+        institution: form.institution || null,
+        account_type: form.account_type as Account["account_type"],
+        currency: form.currency,
+        initial_balance: Number(form.initial_balance || 0),
+      });
     else if (modal === "category")
-      result = await supabase
-        .from("categories")
-        .insert({
-          user_id: userId,
-          name: form.name,
-          category_type: form.category_type as Category["category_type"],
-          parent_id: form.parent_id || null,
-        });
-    else if (modal === "asset")
-      result = await supabase
-        .from("assets")
-        .insert({
-          user_id: userId,
-          name: form.name,
-          asset_type: form.asset_type as Asset["asset_type"],
-          asset_class: form.asset_class,
-          value: Number(form.value || 0),
-          notes: form.notes || null,
-        });
-    else if (modal === "cost_center")
-      result = await supabase
-        .from("cost_centers")
-        .insert({
-          user_id: userId,
-          name: form.name,
-          center_type: form.center_type as CostCenter["center_type"],
-          description: form.description || null,
-        });
+      result = await supabase.from("categories").insert({
+        user_id: userId,
+        name: form.name,
+        category_type: form.category_type as Category["category_type"],
+        parent_id: form.parent_id || null,
+      });
+    else if (modal === "asset") {
+      const payload = {
+        name: form.name,
+        asset_type: form.asset_type as Asset["asset_type"],
+        asset_class: form.asset_class,
+        value: Number(form.value || 0),
+        notes: form.notes || null,
+      };
+      result = editingId
+        ? await supabase.from("assets").update(payload).eq("id", editingId)
+        : await supabase.from("assets").insert({ ...payload, user_id: userId });
+    } else if (modal === "cost_center")
+      result = await supabase.from("cost_centers").insert({
+        user_id: userId,
+        name: form.name,
+        center_type: form.center_type as CostCenter["center_type"],
+        description: form.description || null,
+      });
     else
-      result = await supabase
-        .from("transactions")
-        .insert({
-          user_id: userId,
-          transaction_type: form.transaction_type as Transaction["transaction_type"],
-          account_id: form.account_id,
-          destination_account_id:
-            form.transaction_type === "transfer" ? form.destination_account_id : null,
-          category_id: form.transaction_type === "transfer" ? null : form.category_id || null,
-          cost_center_id: form.cost_center_id || null,
-          amount: Number(form.amount),
-          transaction_date: form.transaction_date,
-          description: form.description,
-          notes: form.notes || null,
-        });
+      result = await supabase.from("transactions").insert({
+        user_id: userId,
+        transaction_type: form.transaction_type as Transaction["transaction_type"],
+        account_id: form.account_id,
+        destination_account_id:
+          form.transaction_type === "transfer" ? form.destination_account_id : null,
+        category_id: form.transaction_type === "transfer" ? null : form.category_id || null,
+        cost_center_id: form.cost_center_id || null,
+        amount: Number(form.amount),
+        transaction_date: form.transaction_date,
+        description: form.description,
+        notes: form.notes || null,
+      });
     if (result.error) setError(result.error.message);
     else {
       setModal(null);
+      setEditingId(null);
       await load();
     }
     setSaving(false);
@@ -611,13 +626,27 @@ export function FinanceApp() {
                 <CostCenters rows={centerSummary} onAdd={() => open("cost_center")} />
               )}
               {view === "assets" && (
-                <Assets assets={assets} totals={totals} onAdd={() => open("asset")} />
+                <Assets
+                  assets={assets}
+                  totals={totals}
+                  onAdd={() => open("asset")}
+                  onEdit={editAsset}
+                  onDelete={deleteAsset}
+                />
               )}
             </>
           )}
         </main>
       </div>
-      <Dialog open={modal !== null} onOpenChange={(openState) => !openState && setModal(null)}>
+      <Dialog
+        open={modal !== null}
+        onOpenChange={(openState) => {
+          if (!openState) {
+            setModal(null);
+            setEditingId(null);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -626,7 +655,9 @@ export function FinanceApp() {
                 : modal === "category"
                   ? "Nova categoria"
                   : modal === "asset"
-                    ? "Novo item patrimonial"
+                    ? editingId
+                      ? "Editar item patrimonial"
+                      : "Novo item patrimonial"
                     : modal === "cost_center"
                       ? "Novo centro de custo"
                       : "Novo lançamento"}
@@ -1322,7 +1353,19 @@ function Categories({ categories, onAdd }: { categories: Category[]; onAdd: () =
     </div>
   );
 }
-function Assets({ assets, totals, onAdd }: any) {
+function Assets({
+  assets,
+  totals,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  assets: Asset[];
+  totals: { assetTotal: number; liabilityTotal: number };
+  onAdd: () => void;
+  onEdit: (asset: Asset) => void;
+  onDelete: (asset: Asset) => void;
+}) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -1341,18 +1384,38 @@ function Assets({ assets, totals, onAdd }: any) {
                 <p className="font-semibold">{a.name}</p>
                 <p className="text-xs text-muted-foreground">{a.asset_class}</p>
               </div>
-              <div className="text-right">
-                <p
-                  className={cn(
-                    "font-mono tabular-nums",
-                    a.asset_type === "asset" ? "text-income" : "text-expense",
-                  )}
-                >
-                  {money.format(Number(a.value))}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {a.asset_type === "asset" ? "Ativo" : "Passivo"}
-                </p>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <p
+                    className={cn(
+                      "font-mono tabular-nums",
+                      a.asset_type === "asset" ? "text-income" : "text-expense",
+                    )}
+                  >
+                    {money.format(Number(a.value))}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {a.asset_type === "asset" ? "Ativo" : "Passivo"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Editar ${a.name}`}
+                    onClick={() => onEdit(a)}
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Excluir ${a.name}`}
+                    onClick={() => onDelete(a)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           ))}
