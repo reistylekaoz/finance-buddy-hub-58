@@ -199,8 +199,10 @@ export type Database = {
           created_at: string
           description: string
           destination_account_id: string | null
+          external_id: string | null
           id: string
           notes: string | null
+          source: string
           transaction_date: string
           transaction_type: Database["public"]["Enums"]["transaction_type"]
           updated_at: string
@@ -214,8 +216,10 @@ export type Database = {
           created_at?: string
           description: string
           destination_account_id?: string | null
+          external_id?: string | null
           id?: string
           notes?: string | null
+          source?: string
           transaction_date?: string
           transaction_type: Database["public"]["Enums"]["transaction_type"]
           updated_at?: string
@@ -229,8 +233,10 @@ export type Database = {
           created_at?: string
           description?: string
           destination_account_id?: string | null
+          external_id?: string | null
           id?: string
           notes?: string | null
+          source?: string
           transaction_date?: string
           transaction_type?: Database["public"]["Enums"]["transaction_type"]
           updated_at?: string
