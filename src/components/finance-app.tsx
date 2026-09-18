@@ -92,19 +92,19 @@ const emptyForm = (): FormState => ({
   name: "",
   institution: "",
   account_type: "checking",
-  initial_balance: "",
+  initial_balance: "0.00",
   currency: "BRL",
   category_type: "expense",
   parent_id: "",
   asset_type: "asset",
   asset_class: "",
-  value: "",
+  value: "0.00",
   notes: "",
   transaction_type: "expense",
   account_id: "",
   destination_account_id: "",
   category_id: "",
-  amount: "",
+  amount: "0.00",
   transaction_date: new Date().toISOString().slice(0, 10),
   description: "",
   center_type: "property",
@@ -399,7 +399,7 @@ export function FinanceApp() {
         institution: row.institution ?? "",
         account_type: row.account_type,
         currency: row.currency || "BRL",
-        initial_balance: String(row.initial_balance ?? ""),
+        initial_balance: String(row.initial_balance ?? "0.00"),
       });
     else if (type === "category")
       setForm({
@@ -414,7 +414,7 @@ export function FinanceApp() {
         name: row.name,
         asset_type: row.asset_type,
         asset_class: row.asset_class,
-        value: String(row.value ?? ""),
+        value: String(row.value ?? "0.00"),
         notes: row.notes ?? "",
       });
     else if (type === "cost_center")
@@ -432,7 +432,7 @@ export function FinanceApp() {
         destination_account_id: row.destination_account_id ?? "",
         category_id: row.category_id ?? "",
         cost_center_id: row.cost_center_id ?? "",
-        amount: String(row.amount ?? ""),
+        amount: String(row.amount ?? "0.00"),
         transaction_date: row.transaction_date,
         description: row.description,
         notes: row.notes ?? "",
@@ -843,7 +843,11 @@ export function FinanceApp() {
                   )}
                 </Field>
                 <Field label="Saldo inicial">
-                  <Input required type="number" step="0.01" {...field("initial_balance")} />
+                  <CurrencyInput
+                    value={form.initial_balance}
+                    onChange={(v) => setForm((f) => ({ ...f, initial_balance: v }))}
+                    allowNegative
+                  />
                 </Field>
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -904,7 +908,10 @@ export function FinanceApp() {
                   />
                 </Field>
                 <Field label="Valor atual">
-                  <Input required type="number" min="0" step="0.01" {...field("value")} />
+                  <CurrencyInput
+                    value={form.value}
+                    onChange={(v) => setForm((f) => ({ ...f, value: v }))}
+                  />
                 </Field>
               </>
             )}
@@ -947,7 +954,10 @@ export function FinanceApp() {
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Valor">
-                    <Input required type="number" min="0.01" step="0.01" {...field("amount")} />
+                    <CurrencyInput
+                      value={form.amount}
+                      onChange={(v) => setForm((f) => ({ ...f, amount: v }))}
+                    />
                   </Field>
                   <Field label="Data">
                     <Input required type="date" {...field("transaction_date")} />
@@ -1055,6 +1065,40 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <Label>{label}</Label>
       {children}
     </div>
+  );
+}
+function CurrencyInput({
+  value,
+  onChange,
+  allowNegative = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  allowNegative?: boolean;
+}) {
+  const num = Number(value || 0);
+  const negative = allowNegative && num < 0;
+  const cents = Math.round(Math.abs(num) * 100);
+  const display =
+    (negative ? "-" : "") +
+    (cents / 100).toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  return (
+    <Input
+      required
+      type="text"
+      inputMode={allowNegative ? "decimal" : "numeric"}
+      value={display}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const isNegative = allowNegative && raw.trim().startsWith("-");
+        const digits = raw.replace(/\D/g, "");
+        const nextCents = digits ? parseInt(digits, 10) : 0;
+        onChange((((isNegative ? -1 : 1) * nextCents) / 100).toFixed(2));
+      }}
+    />
   );
 }
 function InstitutionField({
