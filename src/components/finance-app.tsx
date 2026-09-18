@@ -54,6 +54,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { getDailyRates } from "@/lib/rates.functions";
+import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import type { Database } from "@/integrations/supabase/types";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 
@@ -588,8 +589,11 @@ export function FinanceApp() {
             <p className="px-3 text-xs font-medium uppercase text-muted-foreground">Contas</p>
             <div className="mt-2 space-y-1">
               {balanceByAccount.slice(0, 4).map((a) => (
-                <div key={a.id} className="flex items-center justify-between px-3 py-2 text-xs">
-                  <span className="truncate">{a.name}</span>
+                <div key={a.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <div className="grid size-5 flex-none place-items-center overflow-hidden rounded-sm text-[9px] [&_svg]:size-3">
+                    <BankBadge institution={a.institution} />
+                  </div>
+                  <span className="flex-1 truncate">{a.name}</span>
                   <span className="font-mono tabular-nums">
                     {formatCurrency(a.balance, a.currency)}
                   </span>
@@ -795,9 +799,10 @@ export function FinanceApp() {
                 <Field label="Nome">
                   <Input required {...field("name")} placeholder="Conta principal" />
                 </Field>
-                <Field label="Instituição">
-                  <Input {...field("institution")} placeholder="Nome do banco" />
-                </Field>
+                <InstitutionField
+                  value={form.institution}
+                  onChange={(v) => setForm((f) => ({ ...f, institution: v }))}
+                />
                 <Field label="Tipo">
                   <select className={selectClass} {...field("account_type")}>
                     <option value="checking">Conta corrente</option>
@@ -1026,6 +1031,62 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <Label>{label}</Label>
       {children}
     </div>
+  );
+}
+function InstitutionField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const knownBank = bankByName(value) !== undefined;
+  const [customMode, setCustomMode] = useState(!knownBank && value !== "");
+  return (
+    <Field label="Instituição">
+      <select
+        className={selectClass}
+        value={customMode ? "Outro" : value}
+        onChange={(e) => {
+          if (e.target.value === "Outro") {
+            setCustomMode(true);
+            onChange("");
+          } else {
+            setCustomMode(false);
+            onChange(e.target.value);
+          }
+        }}
+      >
+        <option value="">Nenhuma</option>
+        {BANKS.map((b) => (
+          <option key={b.name} value={b.name}>
+            {b.name}
+          </option>
+        ))}
+        <option value="Outro">Outro</option>
+      </select>
+      {customMode && (
+        <Input
+          className="mt-2"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Nome do banco"
+        />
+      )}
+    </Field>
+  );
+}
+function BankBadge({ institution }: { institution: string | null }) {
+  if (!institution) return <Landmark className="text-primary" />;
+  const bank = bankByName(institution);
+  return (
+    <span
+      className="grid size-full place-items-center rounded-md text-xs font-semibold text-white"
+      style={{ backgroundColor: bank?.color ?? "var(--muted-foreground)" }}
+      title={institution}
+    >
+      {bank?.short ?? initialsFor(institution)}
+    </span>
   );
 }
 function Empty({ title, text, onAdd }: { title: string; text: string; onAdd: () => void }) {
@@ -1262,8 +1323,8 @@ function Accounts({
       {accounts.map((a) => (
         <div key={a.id} className="rounded-lg border border-border bg-card p-5">
           <div className="flex items-start justify-between">
-            <div className="grid size-10 place-items-center rounded-md bg-primary-soft text-primary">
-              <Landmark />
+            <div className="grid size-10 place-items-center overflow-hidden rounded-md bg-primary-soft text-primary">
+              <BankBadge institution={a.institution} />
             </div>
             <div className="flex items-center gap-1">
               <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
