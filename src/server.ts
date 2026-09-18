@@ -44,7 +44,7 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
-const CRON_BANK_SYNC_PATH = "/api/cron/bank-sync";
+const CRON_BANK_SYNC_PATH = "/api/public/cron/bank-sync";
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
