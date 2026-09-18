@@ -96,7 +96,9 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     setConnecting(true);
     try {
       await loadPluggyWidget();
-      const { connectToken } = await createPluggyConnectToken();
+      const { connectToken } = await createPluggyConnectToken({
+        data: { oauthRedirectUrl: window.location.href },
+      });
       if (!window.PluggyConnect) throw new Error("Widget da Pluggy indisponível.");
       const widget = new window.PluggyConnect({
         connectToken,
