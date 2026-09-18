@@ -2139,9 +2139,7 @@ function Settings() {
     setRegistering(true);
     try {
       const { registerTelegramWebhook } = await import("@/lib/telegram.functions");
-      const { webhookUrl } = await registerTelegramWebhook({
-        data: { baseUrl: window.location.origin },
-      });
+      const { webhookUrl } = await registerTelegramWebhook();
       toast.success(`Webhook registrado: ${webhookUrl}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao registrar o webhook.");
