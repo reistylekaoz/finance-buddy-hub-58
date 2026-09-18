@@ -17,6 +17,7 @@ export type Database = {
       accounts: {
         Row: {
           account_type: Database["public"]["Enums"]["account_type"]
+          bank_connection_id: string | null
           color: string
           created_at: string
           currency: string
@@ -25,11 +26,13 @@ export type Database = {
           institution: string | null
           is_active: boolean
           name: string
+          pluggy_account_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           account_type?: Database["public"]["Enums"]["account_type"]
+          bank_connection_id?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -38,11 +41,13 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name: string
+          pluggy_account_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           account_type?: Database["public"]["Enums"]["account_type"]
+          bank_connection_id?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -51,10 +56,19 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name?: string
+          pluggy_account_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "accounts_bank_connection_id_fkey"
+            columns: ["bank_connection_id"]
+            isOneToOne: false
+            referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       assets: {
         Row: {
@@ -89,6 +103,45 @@ export type Database = {
           updated_at?: string
           user_id?: string
           value?: number
+        }
+        Relationships: []
+      }
+      bank_connections: {
+        Row: {
+          connector_name: string | null
+          created_at: string
+          id: string
+          last_synced_at: string | null
+          provider: string
+          pluggy_item_id: string
+          status: string
+          status_detail: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          connector_name?: string | null
+          created_at?: string
+          id?: string
+          last_synced_at?: string | null
+          provider?: string
+          pluggy_item_id: string
+          status?: string
+          status_detail?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          connector_name?: string | null
+          created_at?: string
+          id?: string
+          last_synced_at?: string | null
+          provider?: string
+          pluggy_item_id?: string
+          status?: string
+          status_detail?: string | null
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -250,6 +303,7 @@ export type Database = {
       }
       credit_cards: {
         Row: {
+          bank_connection_id: string | null
           closing_day: number
           color: string
           created_at: string
@@ -259,10 +313,12 @@ export type Database = {
           institution: string | null
           is_active: boolean
           name: string
+          pluggy_account_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          bank_connection_id?: string | null
           closing_day?: number
           color?: string
           created_at?: string
@@ -272,10 +328,12 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name: string
+          pluggy_account_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          bank_connection_id?: string | null
           closing_day?: number
           color?: string
           created_at?: string
@@ -285,10 +343,19 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name?: string
+          pluggy_account_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "credit_cards_bank_connection_id_fkey"
+            columns: ["bank_connection_id"]
+            isOneToOne: false
+            referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
