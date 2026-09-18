@@ -15,6 +15,7 @@ import {
   ArrowRightLeft,
   Building2,
   Check,
+  CreditCard,
   FileUp,
   ChevronRight,
   CircleDollarSign,
@@ -54,6 +55,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
+import { CreditCards } from "@/components/credit-cards";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import type { Database } from "@/integrations/supabase/types";
@@ -65,7 +67,14 @@ type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
 type View =
-  "dashboard" | "accounts" | "transactions" | "import" | "categories" | "cost_centers" | "assets";
+  | "dashboard"
+  | "accounts"
+  | "transactions"
+  | "import"
+  | "credit_cards"
+  | "categories"
+  | "cost_centers"
+  | "assets";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string;
@@ -148,6 +157,7 @@ const nav = [
   { id: "accounts" as const, label: "Contas", icon: WalletCards },
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
   { id: "import" as const, label: "Importar extrato", icon: FileUp },
+  { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
@@ -787,7 +797,7 @@ export function FinanceApp() {
                 </h1>
               </div>
             </div>
-            {view !== "import" && (
+            {view !== "import" && view !== "credit_cards" && (
               <Button
                 onClick={() =>
                   open(
@@ -865,6 +875,14 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   provisions={transactions.filter((t) => t.status === "provisioned")}
                   onImported={load}
+                />
+              )}
+              {view === "credit_cards" && (
+                <CreditCards
+                  categories={categories}
+                  costCenters={costCenters}
+                  categoryPath={categoryPath}
+                  centerName={centerName}
                 />
               )}
               {view === "categories" && (
