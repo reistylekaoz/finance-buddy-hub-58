@@ -532,6 +532,17 @@ export function FinanceApp() {
     if (!pendingDelete) return;
     const { type, id } = pendingDelete;
     setDeleting(true);
+    if (type === "account") {
+      const { error: txError } = await supabase
+        .from("transactions")
+        .delete()
+        .or(`account_id.eq.${id},destination_account_id.eq.${id}`);
+      if (txError) {
+        setDeleting(false);
+        toast.error(`Não foi possível excluir os lançamentos da conta: ${txError.message}`);
+        return;
+      }
+    }
     const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
     setDeleting(false);
     if (delError) toast.error(`Não foi possível excluir: ${delError.message}`);
@@ -929,7 +940,11 @@ export function FinanceApp() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir {pendingDelete?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>Essa ação não pode ser desfeita.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {pendingDelete?.type === "account"
+                ? `Isso vai excluir a conta "${pendingDelete?.label}" e todos os lançamentos dela (incluindo transferências de/para ela). Essa ação não pode ser desfeita.`
+                : "Essa ação não pode ser desfeita."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
