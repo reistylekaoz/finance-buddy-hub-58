@@ -26,6 +26,17 @@ type PluggyTransaction = {
   amount: number;
   date: string;
   type?: "DEBIT" | "CREDIT";
+  creditCardMetadata?: {
+    billId?: string | null;
+    billForecastDate?: string | null;
+  };
+};
+
+type PluggyCreditCardBill = {
+  id: string;
+  // Faturas já fechadas trazem essa data; a fatura aberta (atual) não
+  // aparece nesse endpoint até fechar.
+  billClosingDate?: string | null;
 };
 
 type PluggyItem = {
@@ -108,6 +119,33 @@ async function fetchAllTransactions(accountId: string): Promise<PluggyTransactio
   return items;
 }
 
+// Faturas de cartão já fechadas não devem ser reimportadas (o histórico
+// pode ter anos e nunca é marcado como pago pelo sync) — só a fatura aberta
+// e as futuras interessam. `GET /bills` só lista faturas fechadas; qualquer
+// billId fora desse conjunto é a fatura atual (aberta) ou ainda não existe
+// (lançamento futuro/previsto).
+async function fetchClosedBillIds(accountId: string): Promise<Set<string>> {
+  const closed = new Set<string>();
+  try {
+    let page = 1;
+    for (;;) {
+      const params = new URLSearchParams({ accountId, page: String(page), pageSize: "500" });
+      const data = await pluggyFetch<{ results: PluggyCreditCardBill[]; totalPages: number }>(
+        `/bills?${params.toString()}`,
+      );
+      for (const bill of data.results) {
+        if (bill.billClosingDate) closed.add(bill.id);
+      }
+      if (page >= data.totalPages) break;
+      page += 1;
+    }
+  } catch {
+    // Se a Pluggy não expuser faturas para esse conector, seguimos sem
+    // filtrar por fatura fechada (comportamento anterior: importa tudo).
+  }
+  return closed;
+}
+
 export async function createSupportTicket(
   supabase: Db,
   ticket: {
@@ -163,9 +201,16 @@ export async function syncConnection(
         if (error || !created) throw new Error(error?.message ?? "Falha ao criar cartão.");
         cardId = created.id;
       }
-      const txs = await fetchAllTransactions(pAccount.id);
+      const [txs, closedBillIds] = await Promise.all([
+        fetchAllTransactions(pAccount.id),
+        fetchClosedBillIds(pAccount.id),
+      ]);
       const rows = txs
         .filter((t) => (t.type ?? (t.amount >= 0 ? "DEBIT" : "CREDIT")) === "DEBIT")
+        .filter((t) => {
+          const billId = t.creditCardMetadata?.billId;
+          return !billId || !closedBillIds.has(billId);
+        })
         .map((t) => ({
           user_id: userId,
           card_id: cardId!,
