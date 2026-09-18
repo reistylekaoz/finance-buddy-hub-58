@@ -14,7 +14,7 @@ export default defineConfig({
   },
   vite: {
     environments: {
-      ssr: {
+      nitro: {
         build: {
           rollupOptions: {
             output: {
