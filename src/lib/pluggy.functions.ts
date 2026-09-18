@@ -86,23 +86,24 @@ function dayOfMonth(dateStr: string | undefined): number | null {
   return Number.isFinite(day) && day >= 1 && day <= 31 ? day : null;
 }
 
-// GET /transactions (paginação por página) está descontinuado pela Pluggy e
-// some após 2026-12-31; migrar para GET /v2/transactions (cursor) antes disso.
+// GET /transactions (paginação por página) foi descontinuado pela Pluggy
+// (responde 410 ENDPOINT_DEPRECATED). Usamos GET /v2/transactions, com
+// paginação por cursor, seguindo a mesma lógica do SDK oficial
+// (fetchAllTransactions em pluggy-sdk/dist/client.js): cada página traz
+// `next` com a URL da próxima e o cursor real é o parâmetro `after` dela.
 async function fetchAllTransactions(accountId: string): Promise<PluggyTransaction[]> {
   const items: PluggyTransaction[] = [];
-  let page = 1;
+  let after: string | undefined;
   for (;;) {
-    const params = new URLSearchParams({
-      accountId,
-      page: String(page),
-      pageSize: "500",
-    });
-    const data = await pluggyFetch<{ results: PluggyTransaction[]; totalPages: number }>(
-      `/transactions?${params.toString()}`,
+    const params = new URLSearchParams({ accountId, ...(after ? { after } : {}) });
+    const data = await pluggyFetch<{ results: PluggyTransaction[]; next: string | null }>(
+      `/v2/transactions?${params.toString()}`,
     );
     items.push(...data.results);
-    if (page >= data.totalPages || !data.results.length) break;
-    page += 1;
+    if (!data.next) break;
+    const nextAfter = new URL(data.next, PLUGGY_BASE_URL).searchParams.get("after");
+    if (!nextAfter) break;
+    after = nextAfter;
   }
   return items;
 }
