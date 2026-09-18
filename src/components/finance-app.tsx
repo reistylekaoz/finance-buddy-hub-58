@@ -89,6 +89,11 @@ type FormState = {
   center_type: string;
   cost_center_id: string;
   status: string;
+  recurrence: string;
+  installmentTotal: string;
+  installmentCount: string;
+  installmentFrequencyDays: string;
+  fixedMonths: string;
 };
 const emptyForm = (): FormState => ({
   name: "",
@@ -112,6 +117,11 @@ const emptyForm = (): FormState => ({
   center_type: "property",
   cost_center_id: "",
   status: "confirmed",
+  recurrence: "none",
+  installmentTotal: "0.00",
+  installmentCount: "2",
+  installmentFrequencyDays: "30",
+  fixedMonths: "12",
 });
 const centerTypeLabel: Record<string, string> = {
   property: "Imóvel",
@@ -525,6 +535,44 @@ export function FinanceApp() {
     };
   }
 
+  function buildRecurrenceRows(): {
+    transaction_date: string;
+    amount: number;
+    description: string;
+  }[] {
+    if (form.recurrence === "installments") {
+      const count = Math.max(2, Math.trunc(Number(form.installmentCount || 2)));
+      const freq = Math.max(1, Math.trunc(Number(form.installmentFrequencyDays || 30)));
+      const totalCents = Math.round(Number(form.installmentTotal || 0) * 100);
+      const base = Math.floor(totalCents / count);
+      const remainder = totalCents - base * count;
+      return Array.from({ length: count }, (_, i) => {
+        const date = new Date(`${form.transaction_date}T12:00:00`);
+        date.setDate(date.getDate() + i * freq);
+        const cents = base + (i === count - 1 ? remainder : 0);
+        return {
+          transaction_date: date.toISOString().slice(0, 10),
+          amount: cents / 100,
+          description: `${form.description} (${i + 1}/${count})`,
+        };
+      });
+    }
+    if (form.recurrence === "fixed") {
+      const months = Math.max(1, Math.trunc(Number(form.fixedMonths || 12)));
+      const amount = Number(form.amount || 0);
+      return Array.from({ length: months }, (_, i) => {
+        const date = new Date(`${form.transaction_date}T12:00:00`);
+        date.setMonth(date.getMonth() + i);
+        return {
+          transaction_date: date.toISOString().slice(0, 10),
+          amount,
+          description: `${form.description} (${i + 1}/${months})`,
+        };
+      });
+    }
+    return [];
+  }
+
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -539,6 +587,32 @@ export function FinanceApp() {
       return;
     }
     let result: { error: { message: string } | null };
+    if (modal === "transaction" && !editingId && form.recurrence !== "none") {
+      const rows = buildRecurrenceRows();
+      result = await supabase.from("transactions").insert(
+        rows.map((r) => ({
+          user_id: userId,
+          transaction_type: form.transaction_type,
+          account_id: form.account_id,
+          category_id: form.category_id || null,
+          cost_center_id: form.cost_center_id || null,
+          notes: form.notes || null,
+          status: "provisioned",
+          transaction_date: r.transaction_date,
+          amount: r.amount,
+          description: r.description,
+        })),
+      );
+      if (result.error) setError(result.error.message);
+      else {
+        toast.success(`${rows.length} provisões criadas.`);
+        setModal(null);
+        setEditingId(null);
+        await load();
+      }
+      setSaving(false);
+      return;
+    }
     const payload: Record<string, unknown> =
       modal === "account"
         ? {
@@ -1032,7 +1106,19 @@ export function FinanceApp() {
             {modal === "transaction" && (
               <>
                 <Field label="Tipo">
-                  <select className={selectClass} {...field("transaction_type")}>
+                  <select
+                    className={selectClass}
+                    value={form.transaction_type}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        transaction_type: e.target.value,
+                        ...(e.target.value === "transfer"
+                          ? { status: "confirmed", recurrence: "none" }
+                          : {}),
+                      }))
+                    }
+                  >
                     <option value="expense">Despesa</option>
                     <option value="income">Receita</option>
                     <option value="transfer">Transferência</option>
@@ -1053,20 +1139,79 @@ export function FinanceApp() {
                   </Field>
                 </div>
                 {form.transaction_type !== "transfer" && (
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="size-4 rounded border-input"
-                      checked={form.status === "provisioned"}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          status: e.target.checked ? "provisioned" : "confirmed",
-                        }))
-                      }
-                    />
-                    Provisão (previsão futura, ainda não executada)
-                  </label>
+                  <>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-input"
+                        disabled={form.recurrence !== "none"}
+                        checked={form.status === "provisioned" || form.recurrence !== "none"}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            status: e.target.checked ? "provisioned" : "confirmed",
+                          }))
+                        }
+                      />
+                      Provisão (previsão futura, ainda não executada)
+                    </label>
+                    <div className="space-y-3 rounded-md border border-dashed border-border p-3">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-input"
+                          checked={form.recurrence === "installments"}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              recurrence: e.target.checked ? "installments" : "none",
+                            }))
+                          }
+                        />
+                        Provisão parcelada
+                      </label>
+                      {form.recurrence === "installments" && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <Field label="Valor total">
+                            <CurrencyInput
+                              value={form.installmentTotal}
+                              onChange={(v) => setForm((f) => ({ ...f, installmentTotal: v }))}
+                            />
+                          </Field>
+                          <Field label="Parcelas">
+                            <Input type="number" min="2" step="1" {...field("installmentCount")} />
+                          </Field>
+                          <Field label="A cada (dias)">
+                            <Input
+                              type="number"
+                              min="1"
+                              step="1"
+                              {...field("installmentFrequencyDays")}
+                            />
+                          </Field>
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-input"
+                          checked={form.recurrence === "fixed"}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              recurrence: e.target.checked ? "fixed" : "none",
+                            }))
+                          }
+                        />
+                        Despesa fixa (repete todo mês)
+                      </label>
+                      {form.recurrence === "fixed" && (
+                        <Field label="Gerar quantos meses">
+                          <Input type="number" min="1" step="1" {...field("fixedMonths")} />
+                        </Field>
+                      )}
+                    </div>
+                  </>
                 )}
                 <Field label={form.transaction_type === "transfer" ? "Conta de origem" : "Conta"}>
                   <select required className={selectClass} {...field("account_id")}>
