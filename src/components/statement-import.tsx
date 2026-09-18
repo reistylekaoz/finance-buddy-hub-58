@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileUp, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,11 @@ type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
 type TransactionRow = Database["public"]["Tables"]["transactions"]["Row"];
+type CardTransactionRow = Database["public"]["Tables"]["credit_card_transactions"]["Row"];
+type CreditCardRow = Database["public"]["Tables"]["credit_cards"]["Row"];
+
+type PendingEdit = { category_id: string; cost_center_id: string; reconcile_with: string };
+const emptyEdit: PendingEdit = { category_id: "", cost_center_id: "", reconcile_with: "" };
 
 export type ParsedRow = {
   key: string;
@@ -182,6 +187,7 @@ export function StatementImport({
   costCenters,
   categoryPath,
   provisions,
+  pendingBankTransactions,
   onImported,
 }: {
   accounts: Account[];
@@ -189,10 +195,39 @@ export function StatementImport({
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
   provisions: TransactionRow[];
+  pendingBankTransactions: TransactionRow[];
   onImported: () => void;
 }) {
+  const manualAccounts = useMemo(() => accounts.filter((a) => !a.bank_connection_id), [accounts]);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [accountId, setAccountId] = useState(manualAccounts[0]?.id ?? "");
+
+  const [cards, setCards] = useState<CreditCardRow[]>([]);
+  const [pendingCardTxs, setPendingCardTxs] = useState<CardTransactionRow[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [bankEdits, setBankEdits] = useState<Record<string, PendingEdit>>({});
+  const [cardEdits, setCardEdits] = useState<Record<string, PendingEdit>>({});
+  const [pendingBusy, setPendingBusy] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState("");
+
+  async function loadPendingCards() {
+    setPendingLoading(true);
+    const [cardRows, cardTxRows] = await Promise.all([
+      supabase.from("credit_cards").select("*"),
+      supabase
+        .from("credit_card_transactions")
+        .select("*")
+        .eq("source", "api")
+        .is("reviewed_at", null)
+        .order("purchase_date", { ascending: false }),
+    ]);
+    setCards(cardRows.data ?? []);
+    setPendingCardTxs(cardTxRows.data ?? []);
+    setPendingLoading(false);
+  }
+  useEffect(() => {
+    void loadPendingCards();
+  }, []);
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -348,6 +383,103 @@ export function StatementImport({
     onImported();
   };
 
+  function pendingCandidatesFor(row: TransactionRow): TransactionRow[] {
+    const usedElsewhere = new Set(
+      Object.entries(bankEdits)
+        .filter(([id]) => id !== row.id)
+        .map(([, edit]) => edit.reconcile_with)
+        .filter(Boolean),
+    );
+    return provisions.filter(
+      (p) =>
+        p.account_id === row.account_id &&
+        p.transaction_type === row.transaction_type &&
+        (!usedElsewhere.has(p.id) || p.id === (bankEdits[row.id]?.reconcile_with ?? "")),
+    );
+  }
+
+  async function savePendingBank() {
+    setPendingBusy(true);
+    setPendingMessage("");
+    for (const row of pendingBankTransactions) {
+      const edit = bankEdits[row.id] ?? emptyEdit;
+      if (edit.reconcile_with) {
+        const { error: updateError } = await supabase
+          .from("transactions")
+          .update({
+            status: "confirmed",
+            transaction_date: row.transaction_date,
+            amount: row.amount,
+            external_id: row.external_id,
+          })
+          .eq("id", edit.reconcile_with);
+        if (updateError) {
+          setPendingBusy(false);
+          setPendingMessage(`Erro ao conciliar "${row.description}": ${updateError.message}`);
+          return;
+        }
+        const { error: deleteError } = await supabase
+          .from("transactions")
+          .delete()
+          .eq("id", row.id);
+        if (deleteError) {
+          setPendingBusy(false);
+          setPendingMessage(
+            `Erro ao remover duplicado "${row.description}": ${deleteError.message}`,
+          );
+          return;
+        }
+      } else {
+        const { error: updateError } = await supabase
+          .from("transactions")
+          .update({
+            category_id: edit.category_id || null,
+            cost_center_id: edit.cost_center_id || null,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq("id", row.id);
+        if (updateError) {
+          setPendingBusy(false);
+          setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
+          return;
+        }
+      }
+    }
+    setBankEdits({});
+    setPendingBusy(false);
+    setPendingMessage(
+      `${pendingBankTransactions.length} lançamento${pendingBankTransactions.length === 1 ? "" : "s"} bancário(s) revisado(s).`,
+    );
+    onImported();
+  }
+
+  async function savePendingCards() {
+    setPendingBusy(true);
+    setPendingMessage("");
+    for (const row of pendingCardTxs) {
+      const edit = cardEdits[row.id] ?? emptyEdit;
+      const { error: updateError } = await supabase
+        .from("credit_card_transactions")
+        .update({
+          category_id: edit.category_id || null,
+          cost_center_id: edit.cost_center_id || null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+      if (updateError) {
+        setPendingBusy(false);
+        setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
+        return;
+      }
+    }
+    setCardEdits({});
+    setPendingBusy(false);
+    setPendingMessage(
+      `${pendingCardTxs.length} compra${pendingCardTxs.length === 1 ? "" : "s"} de cartão revisada(s).`,
+    );
+    await loadPendingCards();
+  }
+
   if (!accounts.length) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -358,52 +490,260 @@ export function StatementImport({
 
   return (
     <div className="space-y-4">
+      {pendingMessage && (
+        <p className="rounded-md bg-income-soft p-3 text-sm text-income">{pendingMessage}</p>
+      )}
+
+      {pendingBankTransactions.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <h2 className="font-semibold">Lançamentos bancários pendentes de revisão</h2>
+              <p className="text-xs text-muted-foreground">
+                Vieram da sua integração bancária. Categorize ou conclua conciliando com uma
+                provisão já lançada.
+              </p>
+            </div>
+            <Button onClick={() => void savePendingBank()} disabled={pendingBusy}>
+              {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
+            </Button>
+          </div>
+          <div className="divide-y divide-border">
+            {pendingBankTransactions.map((row) => {
+              const edit = bankEdits[row.id] ?? emptyEdit;
+              const candidates = pendingCandidatesFor(row);
+              const matched = edit.reconcile_with
+                ? provisions.find((p) => p.id === edit.reconcile_with)
+                : undefined;
+              const account = accounts.find((a) => a.id === row.account_id);
+              return (
+                <div
+                  key={row.id}
+                  className="grid gap-3 px-5 py-3 sm:grid-cols-[1fr_auto_minmax(240px,340px)] sm:items-start"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{row.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.transaction_date.split("-").reverse().join("/")}
+                      {account ? ` · ${account.name}` : ""}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "font-mono text-sm tabular-nums",
+                      row.transaction_type === "income" ? "text-income" : "text-expense",
+                    )}
+                  >
+                    {money.format(row.transaction_type === "income" ? row.amount : -row.amount)}
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {(candidates.length > 0 || edit.reconcile_with) && (
+                      <select
+                        className={selectClass}
+                        value={edit.reconcile_with}
+                        onChange={(event) =>
+                          setBankEdits((current) => ({
+                            ...current,
+                            [row.id]: { ...edit, reconcile_with: event.target.value },
+                          }))
+                        }
+                      >
+                        <option value="">Manter lançamento próprio</option>
+                        {candidates.map((provision) => (
+                          <option key={provision.id} value={provision.id}>
+                            Conciliar: {provision.description} · prev.{" "}
+                            {provision.transaction_date.split("-").reverse().join("/")} ·{" "}
+                            {money.format(provision.amount)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {matched ? (
+                      <p className="text-xs text-muted-foreground">
+                        Vai confirmar a provisão "{matched.description}" com esta data e valor, e
+                        remover o lançamento duplicado da integração.
+                      </p>
+                    ) : (
+                      <>
+                        <select
+                          className={selectClass}
+                          value={edit.category_id}
+                          onChange={(event) =>
+                            setBankEdits((current) => ({
+                              ...current,
+                              [row.id]: { ...edit, category_id: event.target.value },
+                            }))
+                          }
+                        >
+                          <option value="">Sem categoria</option>
+                          {categories
+                            .filter((category) => category.category_type === row.transaction_type)
+                            .map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {categoryPath(category.id)}
+                              </option>
+                            ))}
+                        </select>
+                        <select
+                          className={selectClass}
+                          value={edit.cost_center_id}
+                          onChange={(event) =>
+                            setBankEdits((current) => ({
+                              ...current,
+                              [row.id]: { ...edit, cost_center_id: event.target.value },
+                            }))
+                          }
+                        >
+                          <option value="">Sem centro de custo</option>
+                          {costCenters.map((center) => (
+                            <option key={center.id} value={center.id}>
+                              {center.name}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {!pendingLoading && pendingCardTxs.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <h2 className="font-semibold">Compras de cartão pendentes de revisão</h2>
+              <p className="text-xs text-muted-foreground">
+                Vieram da sincronização do cartão de crédito. Só falta a categoria.
+              </p>
+            </div>
+            <Button onClick={() => void savePendingCards()} disabled={pendingBusy}>
+              {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
+            </Button>
+          </div>
+          <div className="divide-y divide-border">
+            {pendingCardTxs.map((row) => {
+              const edit = cardEdits[row.id] ?? emptyEdit;
+              const card = cards.find((c) => c.id === row.card_id);
+              return (
+                <div
+                  key={row.id}
+                  className="grid gap-3 px-5 py-3 sm:grid-cols-[1fr_auto_minmax(240px,340px)] sm:items-start"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{row.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.purchase_date.split("-").reverse().join("/")}
+                      {card ? ` · ${card.name}` : ""}
+                    </p>
+                  </div>
+                  <span className="font-mono text-sm tabular-nums text-expense">
+                    {money.format(row.amount)}
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    <select
+                      className={selectClass}
+                      value={edit.category_id}
+                      onChange={(event) =>
+                        setCardEdits((current) => ({
+                          ...current,
+                          [row.id]: { ...edit, category_id: event.target.value },
+                        }))
+                      }
+                    >
+                      <option value="">Sem categoria</option>
+                      {categories
+                        .filter((category) => category.category_type === "expense")
+                        .map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {categoryPath(category.id)}
+                          </option>
+                        ))}
+                    </select>
+                    <select
+                      className={selectClass}
+                      value={edit.cost_center_id}
+                      onChange={(event) =>
+                        setCardEdits((current) => ({
+                          ...current,
+                          [row.id]: { ...edit, cost_center_id: event.target.value },
+                        }))
+                      }
+                    >
+                      <option value="">Sem centro de custo</option>
+                      {costCenters.map((center) => (
+                        <option key={center.id} value={center.id}>
+                          {center.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-lg border border-border bg-card p-5">
         <h2 className="font-semibold">Importar extrato do banco</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Baixe o extrato em OFX ou CSV no app do Nubank, C6 ou Inter e envie aqui. Lançamentos
-          repetidos são identificados e ficam desmarcados. Quando um movimento bater com uma
-          provisão já lançada, você pode conciliar em vez de criar um novo lançamento.
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-          <label className="space-y-1.5 text-sm">
-            <span className="text-xs font-medium uppercase text-muted-foreground">
-              Conta de destino
-            </span>
-            <select
-              className={cn(selectClass, "h-10 text-sm")}
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
-            >
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
-            {busy ? <Loader2 className="animate-spin" /> : <Upload />}Escolher arquivo
-          </Button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".ofx,.csv,.txt,text/csv"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void handleFile(file);
-            }}
-          />
-        </div>
-        {fileName && <p className="mt-3 text-xs text-muted-foreground">Arquivo: {fileName}</p>}
-        {error && (
-          <p className="mt-3 rounded-md bg-destructive-soft p-3 text-sm text-destructive">
-            {error}
+        {manualAccounts.length > 0 ? (
+          <>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Baixe o extrato em OFX ou CSV no app do Nubank, C6 ou Inter e envie aqui. Lançamentos
+              repetidos são identificados e ficam desmarcados. Quando um movimento bater com uma
+              provisão já lançada, você pode conciliar em vez de criar um novo lançamento.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <label className="space-y-1.5 text-sm">
+                <span className="text-xs font-medium uppercase text-muted-foreground">
+                  Conta de destino
+                </span>
+                <select
+                  className={cn(selectClass, "h-10 text-sm")}
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.target.value)}
+                >
+                  {manualAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <Upload />}Escolher arquivo
+              </Button>
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".ofx,.csv,.txt,text/csv"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void handleFile(file);
+                }}
+              />
+            </div>
+            {fileName && <p className="mt-3 text-xs text-muted-foreground">Arquivo: {fileName}</p>}
+            {error && (
+              <p className="mt-3 rounded-md bg-destructive-soft p-3 text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            {message && (
+              <p className="mt-3 rounded-md bg-income-soft p-3 text-sm text-income">{message}</p>
+            )}
+          </>
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Todas as suas contas já têm integração bancária automática — a importação manual de
+            extrato fica bloqueada para elas, para não duplicar lançamentos. Cadastre uma conta sem
+            integração se precisar importar um extrato manualmente.
           </p>
-        )}
-        {message && (
-          <p className="mt-3 rounded-md bg-income-soft p-3 text-sm text-income">{message}</p>
         )}
       </section>
 
