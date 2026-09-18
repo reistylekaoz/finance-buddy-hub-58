@@ -16,8 +16,10 @@ export type Database = {
     Tables: {
       accounts: {
         Row: {
+          account_number: string | null
           account_type: Database["public"]["Enums"]["account_type"]
           bank_connection_id: string | null
+          branch_number: string | null
           color: string
           created_at: string
           currency: string
@@ -26,13 +28,16 @@ export type Database = {
           institution: string | null
           is_active: boolean
           name: string
+          owner_name: string | null
           pluggy_account_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          account_number?: string | null
           account_type?: Database["public"]["Enums"]["account_type"]
           bank_connection_id?: string | null
+          branch_number?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -41,13 +46,16 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name: string
+          owner_name?: string | null
           pluggy_account_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          account_number?: string | null
           account_type?: Database["public"]["Enums"]["account_type"]
           bank_connection_id?: string | null
+          branch_number?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -56,6 +64,7 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name?: string
+          owner_name?: string | null
           pluggy_account_id?: string | null
           updated_at?: string
           user_id?: string

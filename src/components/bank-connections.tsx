@@ -24,6 +24,24 @@ import {
 import type { Database } from "@/integrations/supabase/types";
 
 type BankConnection = Database["public"]["Tables"]["bank_connections"]["Row"];
+type ConnectedAccountInfo = Pick<
+  Database["public"]["Tables"]["accounts"]["Row"],
+  "bank_connection_id" | "institution" | "owner_name" | "branch_number" | "account_number"
+>;
+
+// Mostra só os últimos dígitos (agência/conta) para não expor o dado
+// completo na tela — o valor cheio fica no banco, isso é só exibição.
+function maskTail(value: string | null, keep: number): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  if (v.length <= keep) return v;
+  return `${"•".repeat(Math.min(4, v.length - keep))}${v.slice(-keep)}`;
+}
+
+function firstName(value: string | null): string | null {
+  const v = value?.trim();
+  return v ? (v.split(/\s+/)[0] ?? null) : null;
+}
 
 // Widget oficial da Pluggy, versão fixada conforme o exemplo publicado pela
 // própria Pluggy (github.com/pluggyai/quickstart). Não é um pacote npm deste
@@ -74,6 +92,9 @@ const statusLabel: Record<string, { label: string; className: string }> = {
 
 export function BankConnections({ onSynced }: { onSynced: () => void }) {
   const [connections, setConnections] = useState<BankConnection[]>([]);
+  const [accountByConnection, setAccountByConnection] = useState<Map<string, ConnectedAccountInfo>>(
+    new Map(),
+  );
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -82,11 +103,21 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase
-      .from("bank_connections")
-      .select("*")
-      .order("created_at", { ascending: false });
-    setConnections(data ?? []);
+    const [{ data: connectionRows }, { data: accountRows }] = await Promise.all([
+      supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
+      supabase
+        .from("accounts")
+        .select("bank_connection_id, institution, owner_name, branch_number, account_number")
+        .not("bank_connection_id", "is", null),
+    ]);
+    setConnections(connectionRows ?? []);
+    setAccountByConnection(
+      new Map(
+        (accountRows ?? [])
+          .filter((a) => a.bank_connection_id)
+          .map((a) => [a.bank_connection_id as string, a]),
+      ),
+    );
     setLoading(false);
   }
   useEffect(() => {
@@ -262,6 +293,10 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                 : null;
               const hoursRemaining = hoursSinceSync !== null ? Math.ceil(12 - hoursSinceSync) : 0;
               const throttled = hoursRemaining > 0;
+              const account = accountByConnection.get(connection.id);
+              const branch = maskTail(account?.branch_number ?? null, 2);
+              const accountNumber = maskTail(account?.account_number ?? null, 4);
+              const owner = firstName(account?.owner_name ?? null);
               return (
                 <div key={connection.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
                   <Landmark className="size-8 flex-none text-primary" />
@@ -269,6 +304,18 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                     <p className="text-sm font-medium">
                       {connection.connector_name || "Banco conectado"}
                     </p>
+                    {(account?.institution || branch || accountNumber || owner) && (
+                      <p className="text-xs text-muted-foreground">
+                        {[
+                          account?.institution,
+                          branch && `Ag. ${branch}`,
+                          accountNumber && `Conta ${accountNumber}`,
+                          owner && `Titular ${owner}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground">
                       {connection.last_synced_at
                         ? `Última sincronização ${new Date(connection.last_synced_at).toLocaleString("pt-BR")}`
