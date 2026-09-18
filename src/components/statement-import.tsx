@@ -672,6 +672,17 @@ export function StatementImport({
               </Button>
             </div>
           </div>
+          <Pager
+            total={pendingBankTransactions.length}
+            page={bankPaged.page}
+            totalPages={bankPaged.totalPages}
+            pageSize={bankPageSize}
+            onPageChange={setBankPage}
+            onPageSizeChange={(size) => {
+              setBankPageSize(size);
+              setBankPage(0);
+            }}
+          />
           <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
             <input
               type="checkbox"
@@ -864,6 +875,17 @@ export function StatementImport({
               </Button>
             </div>
           </div>
+          <Pager
+            total={pendingCardTxs.length}
+            page={cardPaged.page}
+            totalPages={cardPaged.totalPages}
+            pageSize={cardPageSize}
+            onPageChange={setCardPage}
+            onPageSizeChange={(size) => {
+              setCardPageSize(size);
+              setCardPage(0);
+            }}
+          />
           <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
             <input
               type="checkbox"
@@ -1075,6 +1097,17 @@ export function StatementImport({
               </Button>
             </div>
           </div>
+          <Pager
+            total={rows.length}
+            page={ofxPaged.page}
+            totalPages={ofxPaged.totalPages}
+            pageSize={ofxPageSize}
+            onPageChange={setOfxPage}
+            onPageSizeChange={(size) => {
+              setOfxPageSize(size);
+              setOfxPage(0);
+            }}
+          />
           <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
             <input
               type="checkbox"
