@@ -205,7 +205,9 @@ export function FinanceApp() {
       >,
     [accounts],
   );
-  const rateOf = (currency: string) => rates[currency] ?? 1;
+  // sem cotação real, não inventamos 1:1 — melhor excluir do total do que mostrar valor errado.
+  const rateOf = (currency: string): number | null =>
+    rates[currency] ?? (currency === "BRL" ? 1 : null);
   const currencyOf = (accountId: string | null) =>
     accountId ? (accountCurrency[accountId] ?? "BRL") : "BRL";
   const reportableAccountIds = useMemo(
@@ -244,7 +246,13 @@ export function FinanceApp() {
         }, 0);
         const balance = Number(account.initial_balance) + delta;
         const currency = account.currency || "BRL";
-        return { ...account, balance, currency, balanceBRL: balance * rateOf(currency) };
+        const rate = rateOf(currency);
+        return {
+          ...account,
+          balance,
+          currency,
+          balanceBRL: rate !== null ? balance * rate : null,
+        };
       }),
     [accounts, transactions, rates],
   );
@@ -284,19 +292,26 @@ export function FinanceApp() {
     );
     // saldo por moeda de origem das contas, sem converter — só o total geral é convertido para BRL.
     // contas fora dos relatórios não entram em nenhum desses totais.
+    // sem cotação do dia, a moeda fica de fora do total em vez de entrar com um valor errado.
+    const missingRateCurrencies: string[] = [];
     const balanceByCurrency = balanceCurrencies.map((currency) => {
       const accountsInCurrency = reportableBalances.filter((a) => a.currency === currency);
+      const rateAvailable = accountsInCurrency.every((a) => a.balanceBRL !== null);
+      if (!rateAvailable && currency !== "BRL") missingRateCurrencies.push(currency);
       return {
         currency,
         balance: accountsInCurrency.reduce((s, a) => s + a.balance, 0),
-        balanceBRL: accountsInCurrency.reduce((s, a) => s + a.balanceBRL, 0),
+        balanceBRL: rateAvailable
+          ? accountsInCurrency.reduce((s, a) => s + (a.balanceBRL ?? 0), 0)
+          : null,
       };
     });
     // balance é o único total convertido para BRL — é o "saldo atual", não um histórico de transações.
     return {
       byCurrency,
       balanceByCurrency,
-      balance: reportableBalances.reduce((s, a) => s + a.balanceBRL, 0),
+      missingRateCurrencies,
+      balance: reportableBalances.reduce((s, a) => s + (a.balanceBRL ?? 0), 0),
       assetTotal,
       liabilityTotal,
     };
@@ -1225,7 +1240,15 @@ function Dashboard({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Saldo total" value={totals.balance} />
+        <Metric
+          label="Saldo total"
+          value={totals.balance}
+          {...(totals.missingRateCurrencies.length
+            ? {
+                note: `Cotação indisponível hoje para ${totals.missingRateCurrencies.join(", ")} — saldo dessas contas não incluído`,
+              }
+            : {})}
+        />
         {totals.balanceByCurrency
           .filter((c: any) => c.currency !== "BRL")
           .map((c: any) => (
@@ -1234,7 +1257,11 @@ function Dashboard({
               label={`Saldo em ${c.currency}`}
               value={c.balance}
               currency={c.currency}
-              note={`${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`}
+              note={
+                c.balanceBRL === null
+                  ? "Cotação indisponível hoje — não incluído no saldo total"
+                  : `${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`
+              }
             />
           ))}
         {totals.byCurrency.map((c: any) => (
@@ -1381,7 +1408,7 @@ function Accounts({
   onEdit,
   onDelete,
 }: {
-  accounts: (Account & { balance: number; currency: string; balanceBRL: number })[];
+  accounts: (Account & { balance: number; currency: string; balanceBRL: number | null })[];
   onAdd: () => void;
   rateDate: string;
   onEdit: (a: Account) => void;
@@ -1417,10 +1444,13 @@ function Accounts({
           </p>
           {a.currency !== "BRL" && (
             <p className="mt-1 text-xs text-muted-foreground">
-              {money.format(a.balanceBRL)} pela cotação
-              {rateDate
-                ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}`
-                : " do dia anterior"}
+              {a.balanceBRL === null
+                ? "Cotação indisponível hoje"
+                : `${money.format(a.balanceBRL)} pela cotação${
+                    rateDate
+                      ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}`
+                      : " do dia anterior"
+                  }`}
             </p>
           )}
         </div>
