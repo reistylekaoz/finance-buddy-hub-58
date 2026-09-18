@@ -8,6 +8,7 @@ import type { Database } from "@/integrations/supabase/types";
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type TransactionRow = Database["public"]["Tables"]["transactions"]["Row"];
 
 export type ParsedRow = {
   key: string;
@@ -19,7 +20,47 @@ export type ParsedRow = {
   duplicate: boolean;
   category_id: string;
   cost_center_id: string;
+  reconcile_with: string;
 };
+
+function daysBetween(a: string, b: string) {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round(
+    (new Date(`${a}T12:00:00`).getTime() - new Date(`${b}T12:00:00`).getTime()) / msPerDay,
+  );
+}
+
+function matchScore(row: { date: string; amount: number }, provision: TransactionRow) {
+  const amountAbs = Math.abs(row.amount);
+  const amountDiff = Math.abs(amountAbs - provision.amount);
+  const tolerance = Math.max(1, provision.amount * 0.05);
+  if (amountDiff > tolerance) return null;
+  const dateDiff = Math.abs(daysBetween(row.date, provision.transaction_date));
+  if (dateDiff > 60) return null;
+  return amountDiff * 100 + dateDiff;
+}
+
+function guessReconciliations(
+  rows: { date: string; amount: number }[],
+  provisions: TransactionRow[],
+): string[] {
+  const claimed = new Set<string>();
+  return rows.map((row) => {
+    let best: TransactionRow | null = null;
+    let bestScore = Infinity;
+    for (const provision of provisions) {
+      if (claimed.has(provision.id)) continue;
+      if (provision.transaction_type !== (row.amount >= 0 ? "income" : "expense")) continue;
+      const score = matchScore(row, provision);
+      if (score !== null && score < bestScore) {
+        bestScore = score;
+        best = provision;
+      }
+    }
+    if (best) claimed.add(best.id);
+    return best?.id ?? "";
+  });
+}
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const selectClass =
@@ -140,12 +181,14 @@ export function StatementImport({
   categories,
   costCenters,
   categoryPath,
+  provisions,
   onImported,
 }: {
   accounts: Account[];
   categories: Category[];
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
+  provisions: TransactionRow[];
   onImported: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -163,6 +206,7 @@ export function StatementImport({
       income: chosen.filter((r) => r.amount > 0).reduce((sum, r) => sum + r.amount, 0),
       expense: chosen.filter((r) => r.amount < 0).reduce((sum, r) => sum - r.amount, 0),
       duplicates: rows.filter((r) => r.duplicate).length,
+      reconciled: chosen.filter((r) => r.reconcile_with).length,
     };
   }, [rows]);
 
@@ -190,6 +234,10 @@ export function StatementImport({
       const seen = new Set(
         (existing ?? []).map((row: { external_id: string | null }) => row.external_id),
       );
+      const candidatePool = provisions.filter(
+        (p) => p.account_id === accountId && p.transaction_type !== "transfer",
+      );
+      const guesses = guessReconciliations(parsed, candidatePool);
       setRows(
         parsed.map((row, index) => {
           const key = keys[index] as string;
@@ -201,6 +249,7 @@ export function StatementImport({
             selected: !duplicate,
             category_id: "",
             cost_center_id: "",
+            reconcile_with: duplicate ? "" : (guesses[index] ?? ""),
           };
         }),
       );
@@ -219,6 +268,21 @@ export function StatementImport({
   const applyAll = (field: "category_id" | "cost_center_id", value: string) =>
     setRows((current) => current.map((row) => (row.selected ? { ...row, [field]: value } : row)));
 
+  const candidatePool = useMemo(
+    () => provisions.filter((p) => p.account_id === accountId && p.transaction_type !== "transfer"),
+    [provisions, accountId],
+  );
+  const candidatesFor = (row: ParsedRow) => {
+    const usedElsewhere = new Set(
+      rows.filter((r) => r.key !== row.key && r.reconcile_with).map((r) => r.reconcile_with),
+    );
+    return candidatePool.filter(
+      (p) =>
+        p.transaction_type === (row.amount >= 0 ? "income" : "expense") &&
+        (!usedElsewhere.has(p.id) || p.id === row.reconcile_with),
+    );
+  };
+
   const save = async () => {
     setBusy(true);
     setError("");
@@ -230,28 +294,56 @@ export function StatementImport({
       setBusy(false);
       return;
     }
-    const payload = chosen.map((row) => ({
-      user_id: userId,
-      transaction_type: (row.amount >= 0 ? "income" : "expense") as "income" | "expense",
-      account_id: accountId,
-      category_id: row.category_id || null,
-      cost_center_id: row.cost_center_id || null,
-      amount: Math.abs(row.amount),
-      transaction_date: row.date,
-      description: row.description.slice(0, 180),
-      external_id: row.key,
-      source: "import",
-    }));
-    const { error: saveError } = await supabase.from("transactions").insert(payload);
-    setBusy(false);
-    if (saveError) {
-      setError(saveError.message);
-      return;
+    const toReconcile = chosen.filter((row) => row.reconcile_with);
+    const toInsert = chosen.filter((row) => !row.reconcile_with);
+
+    if (toInsert.length) {
+      const payload = toInsert.map((row) => ({
+        user_id: userId,
+        transaction_type: (row.amount >= 0 ? "income" : "expense") as "income" | "expense",
+        account_id: accountId,
+        category_id: row.category_id || null,
+        cost_center_id: row.cost_center_id || null,
+        amount: Math.abs(row.amount),
+        transaction_date: row.date,
+        description: row.description.slice(0, 180),
+        external_id: row.key,
+        source: "import",
+      }));
+      const { error: insertError } = await supabase.from("transactions").insert(payload);
+      if (insertError) {
+        setBusy(false);
+        setError(insertError.message);
+        return;
+      }
     }
+
+    for (const row of toReconcile) {
+      const { error: updateError } = await supabase
+        .from("transactions")
+        .update({
+          status: "confirmed",
+          transaction_date: row.date,
+          amount: Math.abs(row.amount),
+          external_id: row.key,
+        })
+        .eq("id", row.reconcile_with);
+      if (updateError) {
+        setBusy(false);
+        setError(`Não foi possível conciliar "${row.description}": ${updateError.message}`);
+        return;
+      }
+    }
+
+    setBusy(false);
     setRows([]);
     setFileName("");
+    const parts: string[] = [];
+    if (toInsert.length) parts.push(`${toInsert.length} novo${toInsert.length === 1 ? "" : "s"}`);
+    if (toReconcile.length)
+      parts.push(`${toReconcile.length} conciliado${toReconcile.length === 1 ? "" : "s"}`);
     setMessage(
-      `${payload.length} lançamento${payload.length === 1 ? "" : "s"} importado${payload.length === 1 ? "" : "s"} com sucesso.`,
+      `${chosen.length} lançamento${chosen.length === 1 ? "" : "s"} processado${chosen.length === 1 ? "" : "s"} (${parts.join(" · ")}).`,
     );
     onImported();
   };
@@ -270,7 +362,8 @@ export function StatementImport({
         <h2 className="font-semibold">Importar extrato do banco</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Baixe o extrato em OFX ou CSV no app do Nubank, C6 ou Inter e envie aqui. Lançamentos
-          repetidos são identificados e ficam desmarcados.
+          repetidos são identificados e ficam desmarcados. Quando um movimento bater com uma
+          provisão já lançada, você pode conciliar em vez de criar um novo lançamento.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <label className="space-y-1.5 text-sm">
@@ -324,6 +417,7 @@ export function StatementImport({
               <p className="text-xs text-muted-foreground">
                 Entradas {money.format(totals.income)} · Saídas {money.format(totals.expense)}
                 {totals.duplicates ? ` · ${totals.duplicates} já existiam` : ""}
+                {totals.reconciled ? ` · ${totals.reconciled} conciliado(s) com provisão` : ""}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -357,67 +451,102 @@ export function StatementImport({
             </div>
           </div>
           <div className="divide-y divide-border">
-            {rows.map((row) => (
-              <div
-                key={row.key}
-                className={cn(
-                  "grid gap-3 px-5 py-3 sm:grid-cols-[auto_1fr_auto_170px_170px] sm:items-center",
-                  row.duplicate && "opacity-60",
-                )}
-              >
-                <input
-                  type="checkbox"
-                  className="size-4 accent-[var(--primary)]"
-                  checked={row.selected}
-                  onChange={(event) => patch(row.key, { selected: event.target.checked })}
-                  aria-label={`Selecionar ${row.description}`}
-                />
-                <div>
-                  <p className="text-sm font-medium">{row.description}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {row.date.split("-").reverse().join("/")}
-                    {row.duplicate ? " · já importado antes" : ""}
-                  </p>
-                </div>
-                <span
+            {rows.map((row) => {
+              const candidates = candidatesFor(row);
+              const matched = row.reconcile_with
+                ? candidatePool.find((p) => p.id === row.reconcile_with)
+                : undefined;
+              return (
+                <div
+                  key={row.key}
                   className={cn(
-                    "font-mono text-sm tabular-nums",
-                    row.amount >= 0 ? "text-income" : "text-expense",
+                    "grid gap-3 px-5 py-3 sm:grid-cols-[auto_1fr_auto_minmax(240px,340px)] sm:items-start",
+                    row.duplicate && "opacity-60",
                   )}
                 >
-                  {money.format(row.amount)}
-                </span>
-                <select
-                  className={selectClass}
-                  value={row.category_id}
-                  onChange={(event) => patch(row.key, { category_id: event.target.value })}
-                >
-                  <option value="">Sem categoria</option>
-                  {categories
-                    .filter(
-                      (category) =>
-                        category.category_type === (row.amount >= 0 ? "income" : "expense"),
-                    )
-                    .map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {categoryPath(category.id)}
-                      </option>
-                    ))}
-                </select>
-                <select
-                  className={selectClass}
-                  value={row.cost_center_id}
-                  onChange={(event) => patch(row.key, { cost_center_id: event.target.value })}
-                >
-                  <option value="">Sem centro de custo</option>
-                  {costCenters.map((center) => (
-                    <option key={center.id} value={center.id}>
-                      {center.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 accent-[var(--primary)]"
+                    checked={row.selected}
+                    onChange={(event) => patch(row.key, { selected: event.target.checked })}
+                    aria-label={`Selecionar ${row.description}`}
+                  />
+                  <div>
+                    <p className="text-sm font-medium">{row.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.date.split("-").reverse().join("/")}
+                      {row.duplicate ? " · já importado antes" : ""}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "font-mono text-sm tabular-nums",
+                      row.amount >= 0 ? "text-income" : "text-expense",
+                    )}
+                  >
+                    {money.format(row.amount)}
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {(candidates.length > 0 || row.reconcile_with) && (
+                      <select
+                        className={selectClass}
+                        value={row.reconcile_with}
+                        onChange={(event) => patch(row.key, { reconcile_with: event.target.value })}
+                      >
+                        <option value="">Criar novo lançamento</option>
+                        {candidates.map((provision) => (
+                          <option key={provision.id} value={provision.id}>
+                            Conciliar: {provision.description} · prev.{" "}
+                            {provision.transaction_date.split("-").reverse().join("/")} ·{" "}
+                            {money.format(provision.amount)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {matched ? (
+                      <p className="text-xs text-muted-foreground">
+                        Vai confirmar a provisão "{matched.description}" com esta data e valor;
+                        categoria e centro de custo continuam os da provisão.
+                      </p>
+                    ) : (
+                      <>
+                        <select
+                          className={selectClass}
+                          value={row.category_id}
+                          onChange={(event) => patch(row.key, { category_id: event.target.value })}
+                        >
+                          <option value="">Sem categoria</option>
+                          {categories
+                            .filter(
+                              (category) =>
+                                category.category_type === (row.amount >= 0 ? "income" : "expense"),
+                            )
+                            .map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {categoryPath(category.id)}
+                              </option>
+                            ))}
+                        </select>
+                        <select
+                          className={selectClass}
+                          value={row.cost_center_id}
+                          onChange={(event) =>
+                            patch(row.key, { cost_center_id: event.target.value })
+                          }
+                        >
+                          <option value="">Sem centro de custo</option>
+                          {costCenters.map((center) => (
+                            <option key={center.id} value={center.id}>
+                              {center.name}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
