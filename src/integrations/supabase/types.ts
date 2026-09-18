@@ -522,7 +522,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      debug_readonly_sql: { Args: { query: string }; Returns: Json }
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
