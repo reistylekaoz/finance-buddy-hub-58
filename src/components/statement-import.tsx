@@ -71,7 +71,7 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring";
 
-const PAGE_SIZE_OPTIONS = [10, 20, 30] as const;
+const PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
 
 function paginate<T>(items: T[], page: number, pageSize: number) {
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
@@ -278,11 +278,11 @@ export function StatementImport({
   const [pendingBusy, setPendingBusy] = useState(false);
   const [pendingMessage, setPendingMessage] = useState("");
   const [bankPage, setBankPage] = useState(0);
-  const [bankPageSize, setBankPageSize] = useState<number>(20);
+  const [bankPageSize, setBankPageSize] = useState<number>(30);
   const [cardPage, setCardPage] = useState(0);
-  const [cardPageSize, setCardPageSize] = useState<number>(20);
+  const [cardPageSize, setCardPageSize] = useState<number>(30);
   const [ofxPage, setOfxPage] = useState(0);
-  const [ofxPageSize, setOfxPageSize] = useState<number>(20);
+  const [ofxPageSize, setOfxPageSize] = useState<number>(30);
   const [selectedBankIds, setSelectedBankIds] = useState<Set<string>>(new Set());
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
 
