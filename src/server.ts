@@ -46,6 +46,7 @@ function isH3SwallowedErrorBody(body: string): boolean {
 
 const CRON_BANK_SYNC_PATH = "/api/public/cron/bank-sync";
 const DEBUG_SQL_PATH = "/api/public/debug/sql";
+const TELEGRAM_WEBHOOK_PATH = "/api/public/telegram/webhook";
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
@@ -58,6 +59,10 @@ export default {
       if (pathname === DEBUG_SQL_PATH) {
         const { handleDebugSql } = await import("./lib/debug-sql.server");
         return await handleDebugSql(request);
+      }
+      if (pathname === TELEGRAM_WEBHOOK_PATH) {
+        const { handleTelegramWebhook } = await import("./lib/telegram.server");
+        return await handleTelegramWebhook(request);
       }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
