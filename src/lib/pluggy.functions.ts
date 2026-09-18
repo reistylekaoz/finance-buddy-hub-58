@@ -208,16 +208,23 @@ export async function syncConnection(
         accountId = created.id;
       }
       const txs = await fetchAllTransactions(pAccount.id);
-      const rows = txs.map((t) => ({
-        user_id: userId,
-        transaction_type: (t.amount >= 0 ? "income" : "expense") as "income" | "expense",
-        account_id: accountId!,
-        amount: Math.abs(t.amount),
-        transaction_date: t.date.slice(0, 10),
-        description: t.description,
-        source: "api",
-        external_id: t.id,
-      }));
+      const rows = txs.map((t) => {
+        // No Open Finance real, amount vem sempre positivo — a direção é o
+        // campo type (DEBIT = saiu, CREDIT = entrou), não o sinal do valor.
+        // Cair no sinal só quando type não vier (ex.: alguns conectores de
+        // teste do sandbox que já mandam amount com sinal).
+        const isIncome = t.type ? t.type === "CREDIT" : t.amount >= 0;
+        return {
+          user_id: userId,
+          transaction_type: (isIncome ? "income" : "expense") as "income" | "expense",
+          account_id: accountId!,
+          amount: Math.abs(t.amount),
+          transaction_date: t.date.slice(0, 10),
+          description: t.description,
+          source: "api",
+          external_id: t.id,
+        };
+      });
       if (rows.length) {
         const { error } = await supabase
           .from("transactions")
