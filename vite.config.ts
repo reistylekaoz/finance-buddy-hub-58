@@ -12,4 +12,24 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    environments: {
+      ssr: {
+        build: {
+          rollupOptions: {
+            output: {
+              // Keep every dependency in a single vendor chunk. The default
+              // per-library splitting created circular chunk imports, so the
+              // shared CJS helper was still undefined when a chunk evaluated
+              // ("__commonJSMin is not a function" → every page 500ed).
+              advancedChunks: {
+                groups: [{ name: "vendor", test: /node_modules/, priority: 100 }],
+              },
+            },
+          },
+        },
+      },
+    },
+  },
 });
+
