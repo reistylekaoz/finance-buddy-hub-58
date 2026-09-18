@@ -283,13 +283,34 @@ export function StatementImport({
   const [cardPageSize, setCardPageSize] = useState<number>(20);
   const [ofxPage, setOfxPage] = useState(0);
   const [ofxPageSize, setOfxPageSize] = useState<number>(20);
+  const [selectedBankIds, setSelectedBankIds] = useState<Set<string>>(new Set());
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
 
+  function toggleId(current: Set<string>, id: string, checked: boolean): Set<string> {
+    const next = new Set(current);
+    if (checked) next.add(id);
+    else next.delete(id);
+    return next;
+  }
+  function toggleIds(current: Set<string>, ids: string[], checked: boolean): Set<string> {
+    const next = new Set(current);
+    for (const id of ids) {
+      if (checked) next.add(id);
+      else next.delete(id);
+    }
+    return next;
+  }
+
+  // Aplica só nas linhas marcadas com a caixinha (a lista inteira pode ter
+  // centenas de itens espalhados por várias páginas — a seleção continua
+  // marcada ao trocar de página).
   function applyAllBank(field: "category_id" | "cost_center_id", value: string) {
     setBankEdits((current) => {
       const next = { ...current };
       for (const row of pendingBankTransactions) {
+        if (!selectedBankIds.has(row.id)) continue;
         // linhas marcadas pra conciliar com uma provisão não usam categoria
-        // própria (herdam da provisão), então ficam de fora do "aplicar a todos".
+        // própria (herdam da provisão), então ficam de fora do "aplicar aos selecionados".
         if ((current[row.id] ?? emptyEdit).reconcile_with) continue;
         next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
       }
@@ -300,6 +321,7 @@ export function StatementImport({
     setCardEdits((current) => {
       const next = { ...current };
       for (const row of pendingCardTxs) {
+        if (!selectedCardIds.has(row.id)) continue;
         next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
       }
       return next;
@@ -542,6 +564,7 @@ export function StatementImport({
       }
     }
     setBankEdits({});
+    setSelectedBankIds(new Set());
     setPendingBusy(false);
     setPendingMessage(
       `${pendingBankTransactions.length} lançamento${pendingBankTransactions.length === 1 ? "" : "s"} bancário(s) revisado(s).`,
@@ -569,6 +592,7 @@ export function StatementImport({
       }
     }
     setCardEdits({});
+    setSelectedCardIds(new Set());
     setPendingBusy(false);
     setPendingMessage(
       `${pendingCardTxs.length} compra${pendingCardTxs.length === 1 ? "" : "s"} de cartão revisada(s).`,
@@ -614,12 +638,16 @@ export function StatementImport({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {selectedBankIds.size} selecionado{selectedBankIds.size === 1 ? "" : "s"}
+              </span>
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!selectedBankIds.size}
                 onChange={(event) => applyAllBank("category_id", event.target.value)}
               >
-                <option value="">Aplicar categoria a todos</option>
+                <option value="">Aplicar categoria aos selecionados</option>
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {categoryPath(category.id)}
@@ -629,9 +657,10 @@ export function StatementImport({
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!selectedBankIds.size}
                 onChange={(event) => applyAllBank("cost_center_id", event.target.value)}
               >
-                <option value="">Aplicar centro de custo a todos</option>
+                <option value="">Aplicar centro de custo aos selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
@@ -642,6 +671,27 @@ export function StatementImport({
                 {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
               </Button>
             </div>
+          </div>
+          <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={
+                bankPaged.slice.length > 0 &&
+                bankPaged.slice.every((row) => selectedBankIds.has(row.id))
+              }
+              onChange={(event) =>
+                setSelectedBankIds((current) =>
+                  toggleIds(
+                    current,
+                    bankPaged.slice.map((row) => row.id),
+                    event.target.checked,
+                  ),
+                )
+              }
+              aria-label="Selecionar todos nesta página"
+            />
+            Selecionar todos nesta página
           </div>
           <div className="divide-y divide-border">
             {bankPaged.slice.map((row) => {
@@ -654,8 +704,19 @@ export function StatementImport({
               return (
                 <div
                   key={row.id}
-                  className="grid gap-3 px-5 py-3 sm:grid-cols-[1fr_auto_minmax(240px,340px)] sm:items-start"
+                  className="grid gap-3 px-5 py-3 sm:grid-cols-[auto_1fr_auto_minmax(240px,340px)] sm:items-start"
                 >
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 accent-[var(--primary)]"
+                    checked={selectedBankIds.has(row.id)}
+                    onChange={(event) =>
+                      setSelectedBankIds((current) =>
+                        toggleId(current, row.id, event.target.checked),
+                      )
+                    }
+                    aria-label={`Selecionar ${row.description}`}
+                  />
                   <div>
                     <p className="text-sm font-medium">{row.description}</p>
                     <p className="text-xs text-muted-foreground">
@@ -767,12 +828,16 @@ export function StatementImport({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {selectedCardIds.size} selecionado{selectedCardIds.size === 1 ? "" : "s"}
+              </span>
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!selectedCardIds.size}
                 onChange={(event) => applyAllCards("category_id", event.target.value)}
               >
-                <option value="">Aplicar categoria a todos</option>
+                <option value="">Aplicar categoria aos selecionados</option>
                 {categories
                   .filter((category) => category.category_type === "expense")
                   .map((category) => (
@@ -784,9 +849,10 @@ export function StatementImport({
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!selectedCardIds.size}
                 onChange={(event) => applyAllCards("cost_center_id", event.target.value)}
               >
-                <option value="">Aplicar centro de custo a todos</option>
+                <option value="">Aplicar centro de custo aos selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
@@ -798,6 +864,27 @@ export function StatementImport({
               </Button>
             </div>
           </div>
+          <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={
+                cardPaged.slice.length > 0 &&
+                cardPaged.slice.every((row) => selectedCardIds.has(row.id))
+              }
+              onChange={(event) =>
+                setSelectedCardIds((current) =>
+                  toggleIds(
+                    current,
+                    cardPaged.slice.map((row) => row.id),
+                    event.target.checked,
+                  ),
+                )
+              }
+              aria-label="Selecionar todos nesta página"
+            />
+            Selecionar todos nesta página
+          </div>
           <div className="divide-y divide-border">
             {cardPaged.slice.map((row) => {
               const edit = cardEdits[row.id] ?? emptyEdit;
@@ -805,8 +892,19 @@ export function StatementImport({
               return (
                 <div
                   key={row.id}
-                  className="grid gap-3 px-5 py-3 sm:grid-cols-[1fr_auto_minmax(240px,340px)] sm:items-start"
+                  className="grid gap-3 px-5 py-3 sm:grid-cols-[auto_1fr_auto_minmax(240px,340px)] sm:items-start"
                 >
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 accent-[var(--primary)]"
+                    checked={selectedCardIds.has(row.id)}
+                    onChange={(event) =>
+                      setSelectedCardIds((current) =>
+                        toggleId(current, row.id, event.target.checked),
+                      )
+                    }
+                    aria-label={`Selecionar ${row.description}`}
+                  />
                   <div>
                     <p className="text-sm font-medium">{row.description}</p>
                     <p className="text-xs text-muted-foreground">
@@ -949,9 +1047,10 @@ export function StatementImport({
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!totals.count}
                 onChange={(event) => applyAll("category_id", event.target.value)}
               >
-                <option value="">Aplicar categoria a todos</option>
+                <option value="">Aplicar categoria aos selecionados</option>
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {categoryPath(category.id)}
@@ -961,9 +1060,10 @@ export function StatementImport({
               <select
                 className={selectClass}
                 defaultValue=""
+                disabled={!totals.count}
                 onChange={(event) => applyAll("cost_center_id", event.target.value)}
               >
-                <option value="">Aplicar centro de custo a todos</option>
+                <option value="">Aplicar centro de custo aos selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
@@ -974,6 +1074,24 @@ export function StatementImport({
                 {busy ? <Loader2 className="animate-spin" /> : <FileUp />}Importar selecionados
               </Button>
             </div>
+          </div>
+          <div className="flex items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={ofxPaged.slice.length > 0 && ofxPaged.slice.every((row) => row.selected)}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                const pageKeys = new Set(ofxPaged.slice.map((row) => row.key));
+                setRows((current) =>
+                  current.map((row) =>
+                    pageKeys.has(row.key) ? { ...row, selected: checked } : row,
+                  ),
+                );
+              }}
+              aria-label="Selecionar todos nesta página"
+            />
+            Selecionar todos nesta página
           </div>
           <div className="divide-y divide-border">
             {ofxPaged.slice.map((row) => {
