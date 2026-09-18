@@ -267,9 +267,22 @@ export function FinanceApp() {
     const liabilityTotal = assets
       .filter((a) => a.asset_type === "liability")
       .reduce((s, a) => s + Number(a.value), 0);
+    const balanceCurrencies = sortCurrencies(
+      Array.from(new Set(balanceByAccount.map((a) => a.currency))),
+    );
+    // saldo por moeda de origem das contas, sem converter — só o total geral é convertido para BRL.
+    const balanceByCurrency = balanceCurrencies.map((currency) => {
+      const accountsInCurrency = balanceByAccount.filter((a) => a.currency === currency);
+      return {
+        currency,
+        balance: accountsInCurrency.reduce((s, a) => s + a.balance, 0),
+        balanceBRL: accountsInCurrency.reduce((s, a) => s + a.balanceBRL, 0),
+      };
+    });
     // balance é o único total convertido para BRL — é o "saldo atual", não um histórico de transações.
     return {
       byCurrency,
+      balanceByCurrency,
       balance: balanceByAccount.reduce((s, a) => s + a.balanceBRL, 0),
       assetTotal,
       liabilityTotal,
@@ -665,6 +678,7 @@ export function FinanceApp() {
               {view === "dashboard" && (
                 <Dashboard
                   totals={totals}
+                  rateDate={rateDate}
                   chartDataByCurrency={chartDataByCurrency}
                   transactions={transactions}
                   accounts={accounts}
@@ -1034,11 +1048,13 @@ function Metric({
   value,
   tone,
   currency = "BRL",
+  note,
 }: {
   label: string;
   value: number;
   tone?: "positive" | "negative";
   currency?: string;
+  note?: string;
 }) {
   return (
     <div className="rounded-lg border border-border bg-card p-5">
@@ -1052,11 +1068,13 @@ function Metric({
       >
         {formatCurrency(value, currency)}
       </p>
+      {note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
 function Dashboard({
   totals,
+  rateDate,
   chartDataByCurrency,
   transactions,
   accounts,
@@ -1070,6 +1088,17 @@ function Dashboard({
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Saldo total" value={totals.balance} />
+        {totals.balanceByCurrency
+          .filter((c: any) => c.currency !== "BRL")
+          .map((c: any) => (
+            <Metric
+              key={`balance-${c.currency}`}
+              label={`Saldo em ${c.currency}`}
+              value={c.balance}
+              currency={c.currency}
+              note={`${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`}
+            />
+          ))}
         {totals.byCurrency.map((c: any) => (
           <div key={c.currency} className="contents">
             <Metric
