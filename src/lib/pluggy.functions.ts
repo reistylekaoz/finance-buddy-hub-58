@@ -189,6 +189,7 @@ export async function syncConnection(
         .eq("pluggy_account_id", pAccount.id)
         .maybeSingle();
       let accountId = existingAccount?.id ?? null;
+      const isNewAccount = !accountId;
       if (!accountId) {
         const { data: created, error } = await supabase
           .from("accounts")
@@ -234,16 +235,22 @@ export async function syncConnection(
 
         // O histórico disponível na Pluggy não cobre a vida toda da conta;
         // ajustamos o saldo inicial para o saldo calculado bater com o saldo
-        // real informado por ela na primeira sincronização.
-        const sum = rows.reduce(
-          (acc, r) => acc + (r.transaction_type === "income" ? r.amount : -r.amount),
-          0,
-        );
-        await supabase
-          .from("accounts")
-          .update({ initial_balance: pAccount.balance - sum })
-          .eq("id", accountId)
-          .eq("pluggy_account_id", pAccount.id);
+        // real informado por ela, mas só na primeira sincronização (conta
+        // recém-criada). Recalcular em toda sincronização é frágil: se o
+        // histórico devolvido variar entre chamadas (paginação, janela de
+        // datas, etc.), o saldo fica à deriva a cada sync em vez de só
+        // acrescentar os lançamentos novos.
+        if (isNewAccount) {
+          const sum = rows.reduce(
+            (acc, r) => acc + (r.transaction_type === "income" ? r.amount : -r.amount),
+            0,
+          );
+          await supabase
+            .from("accounts")
+            .update({ initial_balance: pAccount.balance - sum })
+            .eq("id", accountId)
+            .eq("pluggy_account_id", pAccount.id);
+        }
       }
     }
   }
