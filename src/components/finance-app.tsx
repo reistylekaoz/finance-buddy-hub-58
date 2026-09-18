@@ -886,6 +886,7 @@ export function FinanceApp() {
                   costCenters={costCenters}
                   categoryPath={categoryPath}
                   centerName={centerName}
+                  accounts={accounts}
                 />
               )}
               {view === "bank_connections" && <BankConnections onSynced={load} />}

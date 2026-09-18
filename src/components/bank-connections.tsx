@@ -201,6 +201,11 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
           <div className="divide-y divide-border">
             {connections.map((connection) => {
               const status = statusLabel[connection.status] ?? statusLabel["connecting"]!;
+              const hoursSinceSync = connection.last_synced_at
+                ? (Date.now() - new Date(connection.last_synced_at).getTime()) / (60 * 60 * 1000)
+                : null;
+              const hoursRemaining = hoursSinceSync !== null ? Math.ceil(12 - hoursSinceSync) : 0;
+              const throttled = hoursRemaining > 0;
               return (
                 <div key={connection.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
                   <Landmark className="size-8 flex-none text-primary" />
@@ -212,7 +217,11 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                       {connection.last_synced_at
                         ? `Última sincronização ${new Date(connection.last_synced_at).toLocaleString("pt-BR")}`
                         : "Ainda não sincronizado"}
+                      {" · atualiza automaticamente todo dia à 01:00"}
                     </p>
+                    {connection.status_detail && (
+                      <p className="mt-0.5 text-xs text-destructive">{connection.status_detail}</p>
+                    )}
                   </div>
                   <span
                     className={cn("rounded-full px-3 py-1 text-xs font-medium", status.className)}
@@ -223,14 +232,15 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                     variant="outline"
                     size="sm"
                     onClick={() => void syncNow(connection)}
-                    disabled={syncingId === connection.id}
+                    disabled={syncingId === connection.id || throttled}
+                    title={throttled ? `Disponível em ${hoursRemaining}h` : undefined}
                   >
                     {syncingId === connection.id ? (
                       <Loader2 className="animate-spin" />
                     ) : (
                       <RefreshCw />
                     )}
-                    Sincronizar agora
+                    {throttled ? `Disponível em ${hoursRemaining}h` : "Sincronizar agora"}
                   </Button>
                   <Button
                     variant="ghost"

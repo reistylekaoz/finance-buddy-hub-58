@@ -108,7 +108,25 @@ async function fetchAllTransactions(accountId: string): Promise<PluggyTransactio
   return items;
 }
 
-async function syncConnection(
+export async function createSupportTicket(
+  supabase: Db,
+  ticket: {
+    user_id: string;
+    title: string;
+    description?: string | null;
+    bank_connection_id?: string | null;
+  },
+) {
+  await supabase.from("support_tickets").insert({
+    user_id: ticket.user_id,
+    title: ticket.title,
+    description: ticket.description ?? null,
+    bank_connection_id: ticket.bank_connection_id ?? null,
+    source: "bank_sync",
+  });
+}
+
+export async function syncConnection(
   supabase: Db,
   userId: string,
   connection: { id: string; pluggy_item_id: string },
@@ -280,12 +298,31 @@ export const registerBankConnection = createServerFn({ method: "POST" })
       if (error || !created) throw new Error(error?.message ?? "Falha ao registrar conexão.");
       connectionId = created.id;
     }
-    const result = await syncConnection(context.supabase, context.userId, {
-      id: connectionId,
-      pluggy_item_id: data.pluggyItemId,
-    });
-    return { connectionId, ...result };
+    try {
+      const result = await syncConnection(context.supabase, context.userId, {
+        id: connectionId,
+        pluggy_item_id: data.pluggyItemId,
+      });
+      return { connectionId, ...result };
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : String(syncError);
+      await context.supabase
+        .from("bank_connections")
+        .update({ status: "error", status_detail: message })
+        .eq("id", connectionId);
+      await createSupportTicket(context.supabase, {
+        user_id: context.userId,
+        bank_connection_id: connectionId,
+        title: "Falha ao sincronizar conexão bancária recém-criada",
+        description: message,
+      });
+      throw syncError;
+    }
   });
+
+// Bloqueia sincronização manual repetida antes desse intervalo; a
+// atualização automática diária (cron) não passa por aqui.
+const MIN_HOURS_BETWEEN_MANUAL_SYNCS = 12;
 
 export const syncBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -293,11 +330,36 @@ export const syncBankConnection = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
-      .select("id, pluggy_item_id")
+      .select("id, pluggy_item_id, last_synced_at")
       .eq("id", data.connectionId)
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
-    return syncConnection(context.supabase, context.userId, connection);
+    if (connection.last_synced_at) {
+      const hoursSinceSync =
+        (Date.now() - new Date(connection.last_synced_at).getTime()) / (60 * 60 * 1000);
+      if (hoursSinceSync < MIN_HOURS_BETWEEN_MANUAL_SYNCS) {
+        const remaining = Math.ceil(MIN_HOURS_BETWEEN_MANUAL_SYNCS - hoursSinceSync);
+        throw new Error(
+          `Essa conexão já foi sincronizada há menos de ${MIN_HOURS_BETWEEN_MANUAL_SYNCS}h. Tente novamente em ${remaining}h.`,
+        );
+      }
+    }
+    try {
+      return await syncConnection(context.supabase, context.userId, connection);
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : String(syncError);
+      await context.supabase
+        .from("bank_connections")
+        .update({ status: "error", status_detail: message })
+        .eq("id", connection.id);
+      await createSupportTicket(context.supabase, {
+        user_id: context.userId,
+        bank_connection_id: connection.id,
+        title: "Falha ao sincronizar conexão bancária",
+        description: message,
+      });
+      throw syncError;
+    }
   });
 
 export const deleteBankConnection = createServerFn({ method: "POST" })
