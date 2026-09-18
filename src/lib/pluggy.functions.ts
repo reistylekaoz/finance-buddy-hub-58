@@ -238,14 +238,23 @@ async function syncConnection(
 
 export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const data = await pluggyFetch<{ accessToken: string }>("/connect_token", {
+  .validator((input: { oauthRedirectUrl: string }) => input)
+  .handler(async ({ context, data }) => {
+    const result = await pluggyFetch<{ accessToken: string }>("/connect_token", {
       method: "POST",
       body: JSON.stringify({
-        options: { clientUserId: context.userId, avoidDuplicates: true },
+        options: {
+          clientUserId: context.userId,
+          avoidDuplicates: true,
+          // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
+          // um redirecionamento de ida e volta para autorizar o acesso; sem
+          // essa URL a Pluggy não sabe pra onde trazer o usuário de volta e
+          // o fluxo falha com um erro genérico.
+          oauthRedirectUrl: data.oauthRedirectUrl,
+        },
       }),
     });
-    return { connectToken: data.accessToken };
+    return { connectToken: result.accessToken };
   });
 
 export const registerBankConnection = createServerFn({ method: "POST" })
