@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -213,15 +214,19 @@ export function CreditCards({
 
   async function load() {
     setLoading(true);
-    const [cardRows, txRows] = await Promise.all([
+    const [cardRows, txsData] = await Promise.all([
       supabase.from("credit_cards").select("*").order("created_at"),
-      supabase
-        .from("credit_card_transactions")
-        .select("*")
-        .order("purchase_date", { ascending: false }),
+      fetchAllRows<CardTransaction>((from, to) =>
+        supabase
+          .from("credit_card_transactions")
+          .select("*")
+          .order("purchase_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
     setCards(cardRows.data ?? []);
-    setTxs(txRows.data ?? []);
+    setTxs(txsData);
     setLoading(false);
   }
   useEffect(() => {
