@@ -59,6 +59,7 @@ import { CreditCards } from "@/components/credit-cards";
 import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import type { Database } from "@/integrations/supabase/types";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 
@@ -187,19 +188,26 @@ export function FinanceApp() {
 
   async function load() {
     setLoading(true);
-    const [profile, accountRows, categoryRows, transactionRows, assetRows, centerRows] =
+    const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
       await Promise.all([
         supabase.from("profiles").select("display_name").maybeSingle(),
         supabase.from("accounts").select("*").order("created_at"),
         supabase.from("categories").select("*").order("name"),
-        supabase.from("transactions").select("*").order("transaction_date", { ascending: false }),
+        fetchAllRows<Transaction>((from, to) =>
+          supabase
+            .from("transactions")
+            .select("*")
+            .order("transaction_date", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
         supabase.from("assets").select("*").order("created_at", { ascending: false }),
         supabase.from("cost_centers").select("*").order("name"),
       ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
     setCategories(categoryRows.data ?? []);
-    setTransactions(transactionRows.data ?? []);
+    setTransactions(transactionsData);
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
     setLoading(false);
