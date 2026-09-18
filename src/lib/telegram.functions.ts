@@ -15,3 +15,10 @@ export const registerTelegramWebhook = createServerFn({ method: "POST" })
     await setTelegramWebhook(webhookUrl);
     return { webhookUrl };
   });
+
+export const getTelegramBotUsername = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const { getBotUsername } = await import("@/lib/telegram.server");
+    return { botUsername: await getBotUsername() };
+  });

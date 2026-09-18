@@ -39,6 +39,20 @@ export async function setTelegramWebhook(webhookUrl: string): Promise<void> {
   await telegramFetch("setWebhook", { url: webhookUrl });
 }
 
+let cachedBotUsername: string | null = null;
+
+// Usado pra montar o link de convite (t.me/<bot>?start=<token>) — a única
+// forma de um destinatário "receber a primeira mensagem": o Telegram não
+// deixa bot nenhum iniciar conversa (regra anti-spam da plataforma), então
+// quem convida manda esse link por fora (WhatsApp, SMS etc.) e a pessoa só
+// toca nele.
+export async function getBotUsername(): Promise<string> {
+  if (cachedBotUsername) return cachedBotUsername;
+  const me = await telegramFetch<{ username: string }>("getMe", {});
+  cachedBotUsername = me.username;
+  return cachedBotUsername;
+}
+
 async function getTelegramFileUrl(fileId: string): Promise<string> {
   const token = getTelegramToken();
   const file = await telegramFetch<{ file_path: string }>("getFile", { file_id: fileId });
@@ -166,6 +180,20 @@ async function findOrLinkRecipient(
     .update({ telegram_chat_id: chatId })
     .eq("id", byUsername.id);
   return toRecipient(byUsername);
+}
+
+// Vínculo pelo link de convite (/start <token>) — não depende de @usuario
+// nem de a pessoa mandar mensagem por conta própria.
+async function linkByToken(supabase: Db, chatId: string, token: string): Promise<Recipient | null> {
+  const { data } = await supabase
+    .from("telegram_recipients")
+    .select(RECIPIENT_COLUMNS)
+    .eq("link_token", token)
+    .maybeSingle();
+  if (!data) return null;
+
+  await supabase.from("telegram_recipients").update({ telegram_chat_id: chatId }).eq("id", data.id);
+  return toRecipient(data);
 }
 
 async function fetchPendingItems(supabase: Db, userId: string, ids: Record<string, unknown>) {
@@ -364,11 +392,14 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
   const chatId = String(message.chat.id);
 
   try {
-    const recipient = await findOrLinkRecipient(supabaseAdmin, chatId, message.from?.username);
+    const startToken = /^\/start(?:\s+(\S+))?/.exec(message.text ?? "")?.[1];
+    const recipient =
+      (startToken ? await linkByToken(supabaseAdmin, chatId, startToken) : null) ??
+      (await findOrLinkRecipient(supabaseAdmin, chatId, message.from?.username));
     if (!recipient) {
       await sendTelegramMessage(
         chatId,
-        "Não encontrei nenhum perfil do Fluxora com esse usuário do Telegram. Peça pra quem administra o app pra cadastrar seu @usuario em Configurações.",
+        "Não encontrei nenhum perfil do Fluxora vinculado a esse link ou usuário do Telegram. Peça pra quem administra o app te mandar o link de convite de novo.",
       );
       return new Response("ok", { status: 200 });
     }
