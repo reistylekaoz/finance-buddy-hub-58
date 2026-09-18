@@ -158,7 +158,7 @@ const nav = [
   { id: "dashboard" as const, label: "Visão geral", icon: LayoutDashboard },
   { id: "accounts" as const, label: "Contas", icon: WalletCards },
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
-  { id: "import" as const, label: "Importar extrato", icon: FileUp },
+  { id: "import" as const, label: "Conciliação e extrato", icon: FileUp },
   { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
   { id: "bank_connections" as const, label: "Conexões bancárias", icon: Landmark },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
@@ -877,6 +877,9 @@ export function FinanceApp() {
                   costCenters={costCenters}
                   categoryPath={categoryPath}
                   provisions={transactions.filter((t) => t.status === "provisioned")}
+                  pendingBankTransactions={transactions.filter(
+                    (t) => t.source === "api" && !t.reviewed_at,
+                  )}
                   onImported={load}
                 />
               )}
