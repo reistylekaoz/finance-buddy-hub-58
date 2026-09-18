@@ -12,4 +12,16 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    // Nitro reads this key from the Vite config. Emitting the server as a
+    // single bundle avoids the circular chunk imports rolldown produced when
+    // splitting per library, which left a shared CommonJS interop helper
+    // undefined at runtime ("__commonJSMin is not a function" → every
+    // published page returned 500).
+    nitro: {
+      rolldownConfig: { output: { inlineDynamicImports: true } },
+    },
+  } as never,
 });
+
+
