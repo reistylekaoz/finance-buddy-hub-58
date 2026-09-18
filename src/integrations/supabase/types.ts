@@ -237,7 +237,6 @@ export type Database = {
           notes: string | null
           paid_at: string | null
           purchase_date: string
-          reviewed_at: string | null
           source: string
           updated_at: string
           user_id: string
@@ -256,7 +255,6 @@ export type Database = {
           notes?: string | null
           paid_at?: string | null
           purchase_date?: string
-          reviewed_at?: string | null
           source?: string
           updated_at?: string
           user_id: string
@@ -275,7 +273,6 @@ export type Database = {
           notes?: string | null
           paid_at?: string | null
           purchase_date?: string
-          reviewed_at?: string | null
           source?: string
           updated_at?: string
           user_id?: string
@@ -384,50 +381,6 @@ export type Database = {
         }
         Relationships: []
       }
-      support_tickets: {
-        Row: {
-          bank_connection_id: string | null
-          created_at: string
-          description: string | null
-          id: string
-          source: string
-          status: string
-          title: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          bank_connection_id?: string | null
-          created_at?: string
-          description?: string | null
-          id?: string
-          source?: string
-          status?: string
-          title: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          bank_connection_id?: string | null
-          created_at?: string
-          description?: string | null
-          id?: string
-          source?: string
-          status?: string
-          title?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "support_tickets_bank_connection_id_fkey"
-            columns: ["bank_connection_id"]
-            isOneToOne: false
-            referencedRelation: "bank_connections"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       transactions: {
         Row: {
           account_id: string
@@ -440,7 +393,6 @@ export type Database = {
           external_id: string | null
           id: string
           notes: string | null
-          reviewed_at: string | null
           source: string
           status: string
           transaction_date: string
@@ -459,7 +411,6 @@ export type Database = {
           external_id?: string | null
           id?: string
           notes?: string | null
-          reviewed_at?: string | null
           source?: string
           status?: string
           transaction_date?: string
@@ -478,7 +429,6 @@ export type Database = {
           external_id?: string | null
           id?: string
           notes?: string | null
-          reviewed_at?: string | null
           source?: string
           status?: string
           transaction_date?: string
