@@ -602,7 +602,7 @@ export function FinanceApp() {
       result = await supabase.from("transactions").insert(
         rows.map((r) => ({
           user_id: userId,
-          transaction_type: form.transaction_type,
+          transaction_type: form.transaction_type as Transaction["transaction_type"],
           account_id: form.account_id,
           category_id: form.category_id || null,
           cost_center_id: form.cost_center_id || null,
