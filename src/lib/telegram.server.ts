@@ -5,10 +5,9 @@ type Db = SupabaseClient<Database>;
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-// Usado só quando o usuário manda áudio — ainda não transcrevemos (fase 2 do
-// item 4 do roadmap: transcrição de voz).
-const VOICE_NOT_SUPPORTED_YET =
-  "Ainda não consigo ouvir áudios — por enquanto, escreva a categorização em texto. 🎙️➡️📝 em breve.";
+// Groq expõe o Whisper com uma API compatível com a da OpenAI — bem mais
+// barato/rápido que a OpenAI direto, mesmo formato de chamada.
+const GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 function getTelegramToken(): string {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
@@ -40,12 +39,52 @@ export async function setTelegramWebhook(webhookUrl: string): Promise<void> {
   await telegramFetch("setWebhook", { url: webhookUrl });
 }
 
+async function getTelegramFileUrl(fileId: string): Promise<string> {
+  const token = getTelegramToken();
+  const file = await telegramFetch<{ file_path: string }>("getFile", { file_id: fileId });
+  return `${TELEGRAM_API_BASE}/file/bot${token}/${file.file_path}`;
+}
+
+// Transcreve o áudio (mensagem de voz do Telegram, formato OGG/Opus) via
+// Whisper na Groq. A Anthropic não recebe áudio na API de mensagens, por
+// isso esse passo extra antes de cair na mesma interpretação por texto.
+async function transcribeVoice(fileUrl: string): Promise<string> {
+  const apiKey = process.env["GROQ_API_KEY"];
+  if (!apiKey) {
+    throw new Error(
+      "Transcrição de voz não configurada: defina GROQ_API_KEY nas variáveis de ambiente do Lovable Cloud.",
+    );
+  }
+  const audioResponse = await fetch(fileUrl);
+  if (!audioResponse.ok) {
+    throw new Error(`Falha ao baixar áudio do Telegram (${audioResponse.status}).`);
+  }
+  const audioBlob = await audioResponse.blob();
+
+  const form = new FormData();
+  form.append("file", audioBlob, "voice.ogg");
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("language", "pt");
+  form.append("response_format", "text");
+
+  const response = await fetch(GROQ_TRANSCRIPTION_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Groq respondeu ${response.status}: ${body.slice(0, 300)}`);
+  }
+  return (await response.text()).trim();
+}
+
 type TelegramUpdate = {
   message?: {
     chat: { id: number | string };
     from?: { username?: string };
     text?: string;
-    voice?: unknown;
+    voice?: { file_id: string };
   };
 };
 
@@ -299,7 +338,30 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
     }
 
     if (message.voice) {
-      await sendTelegramMessage(chatId, VOICE_NOT_SUPPORTED_YET);
+      try {
+        const fileUrl = await getTelegramFileUrl(message.voice.file_id);
+        const transcript = await transcribeVoice(fileUrl);
+        if (!transcript) {
+          await sendTelegramMessage(
+            chatId,
+            "Não consegui entender esse áudio — pode tentar de novo, falando um pouco mais devagar?",
+          );
+          return new Response("ok", { status: 200 });
+        }
+        const reply = await handleCategorizationReply(
+          supabaseAdmin,
+          profile.id,
+          chatId,
+          transcript,
+        );
+        await sendTelegramMessage(chatId, `🎙️ Entendi: "${transcript}"\n\n${reply}`);
+      } catch (voiceError) {
+        console.error("[telegram voice]", voiceError);
+        await sendTelegramMessage(
+          chatId,
+          "Não consegui processar esse áudio agora — pode tentar de novo ou escrever a categorização em texto?",
+        );
+      }
       return new Response("ok", { status: 200 });
     }
 
