@@ -3,6 +3,7 @@ import { Landmark, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -92,6 +93,19 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     void load();
   }, []);
 
+  async function registerExistingItem(pluggyItemId: string) {
+    try {
+      await registerBankConnection({ data: { pluggyItemId } });
+      toast.success("Conexão existente reaproveitada! Sincronizando lançamentos…");
+      await load();
+      onSynced();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Falha ao reaproveitar conexão existente.",
+      );
+    }
+  }
+
   async function connectNewBank() {
     setConnecting(true);
     try {
@@ -120,6 +134,15 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
           })();
         },
         onError: (error) => {
+          // A Pluggy recusa criar um item novo quando já existe outro com as
+          // mesmas credenciais (ITEM_USER_ALREADY_EXISTS) e devolve os ids
+          // dos itens existentes; em vez de falhar, reaproveitamos um deles.
+          const details = error as { message?: string; data?: { items?: string[] } };
+          const existingItemId = details?.data?.items?.at(-1);
+          if (details?.message === "ITEM_USER_ALREADY_EXISTS" && existingItemId) {
+            void registerExistingItem(existingItemId).finally(() => setConnecting(false));
+            return;
+          }
           console.error(error);
           toast.error("Não foi possível conectar ao banco.");
           setConnecting(false);
@@ -131,6 +154,16 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
       toast.error(error instanceof Error ? error.message : "Falha ao iniciar a conexão.");
       setConnecting(false);
     }
+  }
+
+  const [manualItemId, setManualItemId] = useState("");
+  const [registeringManual, setRegisteringManual] = useState(false);
+  async function registerManualItem() {
+    if (!manualItemId.trim()) return;
+    setRegisteringManual(true);
+    await registerExistingItem(manualItemId.trim());
+    setRegisteringManual(false);
+    setManualItemId("");
   }
 
   async function syncNow(connection: BankConnection) {
@@ -190,6 +223,29 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
             Conectar novo banco
           </Button>
         </div>
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Já tem um item existente na Pluggy (erro "ITEM_USER_ALREADY_EXISTS")?
+          </summary>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="min-w-[260px] flex-1 space-y-1">
+              <span className="text-xs text-muted-foreground">ID do item</span>
+              <Input
+                value={manualItemId}
+                onChange={(e) => setManualItemId(e.target.value)}
+                placeholder="ex.: a5922b13-8b65-4726-9b2a-434a0b36af97"
+              />
+            </label>
+            <Button
+              variant="outline"
+              onClick={() => void registerManualItem()}
+              disabled={registeringManual || !manualItemId.trim()}
+            >
+              {registeringManual ? <Loader2 className="animate-spin" /> : null}
+              Registrar item existente
+            </Button>
+          </div>
+        </details>
       </section>
 
       {!connections.length ? (
