@@ -112,8 +112,8 @@ export type Database = {
           created_at: string
           id: string
           last_synced_at: string | null
-          provider: string
           pluggy_item_id: string
+          provider: string
           status: string
           status_detail: string | null
           updated_at: string
@@ -124,8 +124,8 @@ export type Database = {
           created_at?: string
           id?: string
           last_synced_at?: string | null
-          provider?: string
           pluggy_item_id: string
+          provider?: string
           status?: string
           status_detail?: string | null
           updated_at?: string
@@ -136,8 +136,8 @@ export type Database = {
           created_at?: string
           id?: string
           last_synced_at?: string | null
-          provider?: string
           pluggy_item_id?: string
+          provider?: string
           status?: string
           status_detail?: string | null
           updated_at?: string
