@@ -20,7 +20,7 @@ export const BANKS: Bank[] = [
   },
   { name: "Nubank", short: "Nu", color: "#820AD1", logo: "/banks/nubank.png" },
   { name: "Banco Inter", short: "Inter", color: "#FF7A00", logo: "/banks/inter.png" },
-  { name: "C6 Bank", short: "C6", color: "#1B1B1B" },
+  { name: "C6 Bank", short: "C6", color: "#1B1B1B", logo: "/banks/c6.png" },
   { name: "BTG Pactual", short: "BTG", color: "#003399" },
   { name: "Sicoob", short: "Sico", color: "#00A651" },
   { name: "Sicredi", short: "Sicr", color: "#00854A" },
