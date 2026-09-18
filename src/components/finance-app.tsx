@@ -942,7 +942,7 @@ export function FinanceApp() {
                   onDelete={(a: Asset) => remove("asset", a.id, a.name)}
                 />
               )}
-              {view === "settings" && <Settings />}
+              {view === "settings" && <Settings accounts={accounts} />}
             </>
           )}
         </main>
@@ -2100,39 +2100,68 @@ function Assets({ assets, totals, onAdd, onEdit, onDelete }: any) {
   );
 }
 
-function Settings() {
-  const [telegramUsername, setTelegramUsername] = useState("");
-  const [linked, setLinked] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [registering, setRegistering] = useState(false);
+type TelegramRecipientRow = Database["public"]["Tables"]["telegram_recipients"]["Row"];
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function Settings({ accounts }: { accounts: Account[] }) {
+  const [recipients, setRecipients] = useState<TelegramRecipientRow[]>([]);
+  const [cards, setCards] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [registering, setRegistering] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newUsername, setNewUsername] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const [{ data: recipientRows }, { data: cardRows }] = await Promise.all([
+      supabase.from("telegram_recipients").select("*").order("created_at"),
+      supabase.from("credit_cards").select("id, name").order("created_at"),
+    ]);
+    setRecipients(recipientRows ?? []);
+    setCards(cardRows ?? []);
+    setLoading(false);
+  }
   useEffect(() => {
-    void (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("telegram_username, telegram_chat_id")
-        .maybeSingle();
-      setTelegramUsername(data?.telegram_username ?? "");
-      setLinked(!!data?.telegram_chat_id);
-      setLoading(false);
-    })();
+    void load();
   }, []);
 
-  async function saveTelegramUsername() {
-    setSaving(true);
-    const clean = telegramUsername.trim().replace(/^@/, "");
-    const { error } = await supabase
-      .from("profiles")
-      .update({ telegram_username: clean || null })
-      .eq("id", (await supabase.auth.getUser()).data.user?.id ?? "");
-    setSaving(false);
+  async function addRecipient() {
+    if (!newUsername.trim()) return;
+    setAdding(true);
+    const { data: auth } = await supabase.auth.getUser();
+    const { error } = await supabase.from("telegram_recipients").insert({
+      user_id: auth.user?.id ?? "",
+      label: newLabel.trim() || "Novo perfil",
+      telegram_username: newUsername.trim().replace(/^@/, ""),
+    });
+    setAdding(false);
     if (error) {
       toast.error(error.message);
       return;
     }
-    setTelegramUsername(clean);
-    toast.success("Usuário do Telegram salvo. Agora mande uma mensagem para o bot pra vincular.");
+    setNewLabel("");
+    setNewUsername("");
+    toast.success("Perfil criado. Peça pra essa pessoa mandar uma mensagem pro bot pra vincular.");
+    await load();
+  }
+
+  async function updateRecipient(id: string, patch: Partial<TelegramRecipientRow>) {
+    setRecipients((current) => current.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    const { error } = await supabase.from("telegram_recipients").update(patch).eq("id", id);
+    if (error) toast.error(error.message);
+  }
+
+  async function deleteRecipient(id: string) {
+    const { error } = await supabase.from("telegram_recipients").delete().eq("id", id);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setRecipients((current) => current.filter((r) => r.id !== id));
   }
 
   async function setupWebhook() {
@@ -2164,31 +2193,54 @@ function Settings() {
           <div>
             <h2 className="font-semibold">Notificações por Telegram</h2>
             <p className="text-xs text-muted-foreground">
-              Todo dia de manhã o bot manda os gastos detectados no dia anterior — responda a
-              mensagem descrevendo as categorias e eu categorizo pra você.
+              Cadastre um perfil por pessoa que deve receber os gastos detectados automaticamente —
+              cada um escolhe a frequência e quais contas/cartões acompanha.
             </p>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+
+        <div className="mt-4 space-y-3">
+          {recipients.map((recipient) => (
+            <RecipientCard
+              key={recipient.id}
+              recipient={recipient}
+              accounts={accounts}
+              cards={cards}
+              onChange={(patch) => void updateRecipient(recipient.id, patch)}
+              onDelete={() => void deleteRecipient(recipient.id)}
+            />
+          ))}
+          {!recipients.length && (
+            <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+              Nenhum perfil cadastrado ainda.
+            </p>
+          )}
+        </div>
+
+        <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
           <label className="space-y-1.5 text-sm">
-            <span className="text-xs font-medium uppercase text-muted-foreground">
-              Seu usuário no Telegram
-            </span>
+            <span className="text-xs font-medium uppercase text-muted-foreground">Nome</span>
             <Input
-              value={telegramUsername}
-              onChange={(e) => setTelegramUsername(e.target.value)}
-              placeholder="@seu_usuario"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="Ex.: Esposa, Contador"
             />
           </label>
-          <Button onClick={() => void saveTelegramUsername()} disabled={saving}>
-            {saving ? <Loader2 className="animate-spin" /> : null}Salvar
+          <label className="space-y-1.5 text-sm">
+            <span className="text-xs font-medium uppercase text-muted-foreground">
+              Usuário no Telegram
+            </span>
+            <Input
+              value={newUsername}
+              onChange={(e) => setNewUsername(e.target.value)}
+              placeholder="@usuario"
+            />
+          </label>
+          <Button onClick={() => void addRecipient()} disabled={adding || !newUsername.trim()}>
+            {adding ? <Loader2 className="animate-spin" /> : <Plus />}Adicionar perfil
           </Button>
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Status: {linked ? "✅ vinculado ao Telegram" : "⏳ ainda não vinculado"}
-          {!linked &&
-            " — depois de salvar o usuário, abra o bot no Telegram e mande qualquer mensagem pra vincular."}
-        </p>
+
         <details className="mt-4 text-sm">
           <summary className="cursor-pointer text-xs text-muted-foreground">
             Administração (uma vez, após configurar o bot)
@@ -2206,6 +2258,148 @@ function Settings() {
           </div>
         </details>
       </section>
+    </div>
+  );
+}
+
+function RecipientCard({
+  recipient,
+  accounts,
+  cards,
+  onChange,
+  onDelete,
+}: {
+  recipient: TelegramRecipientRow;
+  accounts: Account[];
+  cards: { id: string; name: string }[];
+  onChange: (patch: Partial<TelegramRecipientRow>) => void;
+  onDelete: () => void;
+}) {
+  const [label, setLabel] = useState(recipient.label);
+  const accountIds = new Set(asStringArray(recipient.account_ids));
+  const cardIds = new Set(asStringArray(recipient.card_ids));
+
+  function toggleScopeId(kind: "account" | "card", id: string, checked: boolean) {
+    const current = new Set(kind === "account" ? accountIds : cardIds);
+    if (checked) current.add(id);
+    else current.delete(id);
+    onChange(kind === "account" ? { account_ids: [...current] } : { card_ids: [...current] });
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          className="max-w-[220px]"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          onBlur={() => label !== recipient.label && onChange({ label })}
+        />
+        <span
+          className={cn(
+            "rounded-full px-2 py-1 text-xs font-medium",
+            recipient.telegram_chat_id
+              ? "bg-income-soft text-income"
+              : "bg-muted text-muted-foreground",
+          )}
+        >
+          {recipient.telegram_chat_id
+            ? "✅ vinculado"
+            : `⏳ aguardando @${recipient.telegram_username}`}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="ml-auto"
+          onClick={onDelete}
+          aria-label="Remover perfil"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
+
+      <div className="mt-3">
+        <p className="text-xs font-medium uppercase text-muted-foreground">Frequência</p>
+        <div className="mt-1.5 flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={recipient.notify_daily}
+              onChange={(e) => onChange({ notify_daily: e.target.checked })}
+            />
+            Diária
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={recipient.notify_weekly}
+              onChange={(e) => onChange({ notify_weekly: e.target.checked })}
+            />
+            Semanal
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={recipient.notify_monthly}
+              onChange={(e) => onChange({ notify_monthly: e.target.checked })}
+            />
+            Mensal
+          </label>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <p className="text-xs font-medium uppercase text-muted-foreground">Contas e cartões</p>
+        <div className="mt-1.5 flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name={`scope-${recipient.id}`}
+              checked={recipient.all_accounts}
+              onChange={() => onChange({ all_accounts: true })}
+            />
+            Todas as contas
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name={`scope-${recipient.id}`}
+              checked={!recipient.all_accounts}
+              onChange={() => onChange({ all_accounts: false })}
+            />
+            Contas específicas
+          </label>
+        </div>
+        {!recipient.all_accounts && (
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {accounts.map((account) => (
+              <label key={account.id} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-[var(--primary)]"
+                  checked={accountIds.has(account.id)}
+                  onChange={(e) => toggleScopeId("account", account.id, e.target.checked)}
+                />
+                {account.name}
+              </label>
+            ))}
+            {cards.map((card) => (
+              <label key={card.id} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-[var(--primary)]"
+                  checked={cardIds.has(card.id)}
+                  onChange={(e) => toggleScopeId("card", card.id, e.target.checked)}
+                />
+                {card.name} (cartão)
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

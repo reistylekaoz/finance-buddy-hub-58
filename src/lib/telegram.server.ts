@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 type Db = SupabaseClient<Database>;
 
@@ -103,32 +103,69 @@ type CategoryOption = {
   category_type: "income" | "expense";
 };
 
+type Recipient = {
+  id: string;
+  user_id: string;
+  label: string;
+  all_accounts: boolean;
+  account_ids: string[];
+  card_ids: string[];
+};
+
 function stripAt(username: string): string {
   return username.startsWith("@") ? username.slice(1) : username;
 }
 
-async function findOrLinkProfile(
+function asStringArray(value: Json): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function toRecipient(row: {
+  id: string;
+  user_id: string;
+  label: string;
+  all_accounts: boolean;
+  account_ids: Json;
+  card_ids: Json;
+}): Recipient {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    label: row.label,
+    all_accounts: row.all_accounts,
+    account_ids: asStringArray(row.account_ids),
+    card_ids: asStringArray(row.card_ids),
+  };
+}
+
+const RECIPIENT_COLUMNS = "id, user_id, label, all_accounts, account_ids, card_ids";
+
+async function findOrLinkRecipient(
   supabase: Db,
   chatId: string,
   fromUsername: string | undefined,
-): Promise<{ id: string; display_name: string } | null> {
+): Promise<Recipient | null> {
   const { data: byChat } = await supabase
-    .from("profiles")
-    .select("id, display_name")
+    .from("telegram_recipients")
+    .select(RECIPIENT_COLUMNS)
     .eq("telegram_chat_id", chatId)
     .maybeSingle();
-  if (byChat) return byChat;
+  if (byChat) return toRecipient(byChat);
 
   if (!fromUsername) return null;
   const { data: byUsername } = await supabase
-    .from("profiles")
-    .select("id, display_name")
+    .from("telegram_recipients")
+    .select(RECIPIENT_COLUMNS)
     .ilike("telegram_username", stripAt(fromUsername))
+    .is("telegram_chat_id", null)
     .maybeSingle();
   if (!byUsername) return null;
 
-  await supabase.from("profiles").update({ telegram_chat_id: chatId }).eq("id", byUsername.id);
-  return byUsername;
+  await supabase
+    .from("telegram_recipients")
+    .update({ telegram_chat_id: chatId })
+    .eq("id", byUsername.id);
+  return toRecipient(byUsername);
 }
 
 async function fetchPendingItems(supabase: Db, userId: string, ids: Record<string, unknown>) {
@@ -246,14 +283,13 @@ async function interpretCategorization(
 
 async function handleCategorizationReply(
   supabase: Db,
-  userId: string,
-  chatId: string,
+  recipient: Recipient,
   text: string,
 ): Promise<string> {
   const { data: digest } = await supabase
     .from("telegram_digests")
     .select("id, transaction_ids, card_transaction_ids")
-    .eq("user_id", userId)
+    .eq("recipient_id", recipient.id)
     .order("sent_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -261,7 +297,7 @@ async function handleCategorizationReply(
     return "Não tem nada pendente de categorização agora. Assim que eu detectar novos gastos, aviso por aqui.";
   }
 
-  const items = await fetchPendingItems(supabase, userId, digest);
+  const items = await fetchPendingItems(supabase, recipient.user_id, digest);
   if (!items.length) {
     return "Já está tudo revisado, nada pendente no momento. 👍";
   }
@@ -269,7 +305,7 @@ async function handleCategorizationReply(
   const { data: categoryRows } = await supabase
     .from("categories")
     .select("id, name, category_type")
-    .eq("user_id", userId);
+    .eq("user_id", recipient.user_id);
   const categories = categoryRows ?? [];
   if (!categories.length) {
     return "Você ainda não tem categorias cadastradas no app — crie ao menos uma antes de categorizar por aqui.";
@@ -313,8 +349,8 @@ async function handleCategorizationReply(
 export async function handleTelegramWebhook(request: Request): Promise<Response> {
   // Sem autenticação própria: o Telegram não assina os webhooks por padrão e
   // essa rota só executa ações escopadas ao chat_id que já enviou a mensagem
-  // (nunca em nome de outro usuário) — o pior caso de abuso é alguém mandar
-  // mensagens soltas pro próprio bot.
+  // (nunca em nome de outro destinatário) — o pior caso de abuso é alguém
+  // mandar mensagens soltas pro próprio bot.
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   let update: TelegramUpdate;
   try {
@@ -328,11 +364,11 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
   const chatId = String(message.chat.id);
 
   try {
-    const profile = await findOrLinkProfile(supabaseAdmin, chatId, message.from?.username);
-    if (!profile) {
+    const recipient = await findOrLinkRecipient(supabaseAdmin, chatId, message.from?.username);
+    if (!recipient) {
       await sendTelegramMessage(
         chatId,
-        "Não encontrei seu perfil do Fluxora. Abra o app, vá em Configurações e cadastre seu usuário do Telegram (@seu_usuario) para vincular.",
+        "Não encontrei nenhum perfil do Fluxora com esse usuário do Telegram. Peça pra quem administra o app pra cadastrar seu @usuario em Configurações.",
       );
       return new Response("ok", { status: 200 });
     }
@@ -348,12 +384,7 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
           );
           return new Response("ok", { status: 200 });
         }
-        const reply = await handleCategorizationReply(
-          supabaseAdmin,
-          profile.id,
-          chatId,
-          transcript,
-        );
+        const reply = await handleCategorizationReply(supabaseAdmin, recipient, transcript);
         await sendTelegramMessage(chatId, `🎙️ Entendi: "${transcript}"\n\n${reply}`);
       } catch (voiceError) {
         console.error("[telegram voice]", voiceError);
@@ -366,19 +397,14 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
     }
 
     if (message.text && !message.text.startsWith("/")) {
-      const reply = await handleCategorizationReply(
-        supabaseAdmin,
-        profile.id,
-        chatId,
-        message.text,
-      );
+      const reply = await handleCategorizationReply(supabaseAdmin, recipient, message.text);
       await sendTelegramMessage(chatId, reply);
       return new Response("ok", { status: 200 });
     }
 
     await sendTelegramMessage(
       chatId,
-      `Oi, ${profile.display_name || "tudo bem"}! Todo dia de manhã eu mando os gastos detectados no dia anterior por aqui — é só responder descrevendo as categorias.`,
+      `Oi, ${recipient.label || "tudo bem"}! Conforme a frequência configurada, eu mando por aqui os gastos detectados automaticamente — é só responder descrevendo as categorias.`,
     );
   } catch (error) {
     console.error("[telegram webhook]", error);
@@ -390,75 +416,157 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
   return new Response("ok", { status: 200 });
 }
 
-// Roda dentro do cron diário (01:00), depois da sincronização bancária: para
-// cada usuário com Telegram vinculado, manda os gastos de ontem detectados
-// via integração e ainda não revisados.
-export async function sendDailyDigests(supabaseAdmin: Db): Promise<{ sent: number }> {
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+type Frequency = "daily" | "weekly" | "monthly";
 
-  const { data: profiles } = await supabaseAdmin
-    .from("profiles")
-    .select("id, telegram_chat_id")
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+function toIsoDate(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+function br(dateIso: string): string {
+  return dateIso.split("-").reverse().join("/");
+}
+
+// Cada frequência cobre um período diferente; rodam de forma independente
+// (o que já foi categorizado numa não reaparece na próxima, por causa do
+// filtro reviewed_at IS NULL).
+function dateRangeFor(freq: Frequency, now: Date): { from: string; to: string; title: string } {
+  if (freq === "daily") {
+    const d = toIsoDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    return { from: d, to: d, title: `📋 Gastos de ontem (${br(d)})` };
+  }
+  if (freq === "weekly") {
+    const to = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const from = new Date(to.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const fromIso = toIsoDate(from);
+    const toIso = toIsoDate(to);
+    return {
+      from: fromIso,
+      to: toIso,
+      title: `📅 Resumo da semana (${br(fromIso)} a ${br(toIso)})`,
+    };
+  }
+  const firstOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const lastOfPrevMonth = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000);
+  const firstOfPrevMonth = new Date(
+    Date.UTC(lastOfPrevMonth.getUTCFullYear(), lastOfPrevMonth.getUTCMonth(), 1),
+  );
+  const fromIso = toIsoDate(firstOfPrevMonth);
+  const toIso = toIsoDate(lastOfPrevMonth);
+  return { from: fromIso, to: toIso, title: `🗓️ Resumo do mês (${br(fromIso)} a ${br(toIso)})` };
+}
+
+// Semanal só dispara às segundas (cobre a semana anterior inteira); mensal
+// só no dia 1 (cobre o mês anterior inteiro). Diário roda sempre.
+function isScheduledToday(freq: Frequency, now: Date): boolean {
+  if (freq === "daily") return true;
+  if (freq === "weekly") return now.getUTCDay() === 1;
+  return now.getUTCDate() === 1;
+}
+
+async function sendDigestForRecipient(
+  supabaseAdmin: Db,
+  recipient: Recipient & { telegram_chat_id: string },
+  freq: Frequency,
+  now: Date,
+): Promise<boolean> {
+  const { from, to, title } = dateRangeFor(freq, now);
+
+  let bankQuery = supabaseAdmin
+    .from("transactions")
+    .select("id, description, amount, transaction_type, account_id")
+    .eq("user_id", recipient.user_id)
+    .eq("source", "api")
+    .gte("transaction_date", from)
+    .lte("transaction_date", to)
+    .is("reviewed_at", null)
+    .neq("transaction_type", "transfer");
+  let cardQuery = supabaseAdmin
+    .from("credit_card_transactions")
+    .select("id, description, amount, card_id")
+    .eq("user_id", recipient.user_id)
+    .eq("source", "api")
+    .gte("purchase_date", from)
+    .lte("purchase_date", to)
+    .is("reviewed_at", null);
+
+  if (!recipient.all_accounts) {
+    bankQuery = recipient.account_ids.length
+      ? bankQuery.in("account_id", recipient.account_ids)
+      : bankQuery.eq("account_id", "00000000-0000-0000-0000-000000000000");
+    cardQuery = recipient.card_ids.length
+      ? cardQuery.in("card_id", recipient.card_ids)
+      : cardQuery.eq("card_id", "00000000-0000-0000-0000-000000000000");
+  }
+
+  const [{ data: bankRows }, { data: cardRows }] = await Promise.all([bankQuery, cardQuery]);
+  const bank = bankRows ?? [];
+  const card = cardRows ?? [];
+  if (!bank.length && !card.length) return false;
+
+  const [{ data: accounts }, { data: cards }] = await Promise.all([
+    supabaseAdmin.from("accounts").select("id, name").eq("user_id", recipient.user_id),
+    supabaseAdmin.from("credit_cards").select("id, name").eq("user_id", recipient.user_id),
+  ]);
+  const accountName = new Map((accounts ?? []).map((a) => [a.id, a.name]));
+  const cardName = new Map((cards ?? []).map((c) => [c.id, c.name]));
+
+  const lines: string[] = [title];
+  for (const row of bank) {
+    const sign = row.transaction_type === "income" ? "+" : "-";
+    lines.push(
+      `${sign} ${money(Number(row.amount))} · ${row.description} · ${accountName.get(row.account_id) ?? "conta"}`,
+    );
+  }
+  for (const row of card) {
+    lines.push(
+      `- ${money(Number(row.amount))} · ${row.description} · ${cardName.get(row.card_id) ?? "cartão"}`,
+    );
+  }
+  lines.push(
+    "",
+    'Responda descrevendo as categorias (ex.: "o Uber foi transporte, o resto foi mercado").',
+  );
+
+  await sendTelegramMessage(recipient.telegram_chat_id, lines.join("\n"));
+  await supabaseAdmin.from("telegram_digests").insert({
+    user_id: recipient.user_id,
+    recipient_id: recipient.id,
+    chat_id: recipient.telegram_chat_id,
+    transaction_ids: bank.map((r) => r.id),
+    card_transaction_ids: card.map((r) => r.id),
+  });
+  return true;
+}
+
+// Roda dentro do cron diário (01:00), depois da sincronização bancária: para
+// cada destinatário do Telegram vinculado, manda (conforme a frequência que
+// ele escolheu e o escopo de contas/cartões dele) os gastos detectados via
+// integração e ainda não revisados.
+export async function sendDailyDigests(supabaseAdmin: Db): Promise<{ sent: number }> {
+  const now = new Date();
+  const { data: recipientRows } = await supabaseAdmin
+    .from("telegram_recipients")
+    .select(
+      "id, user_id, label, all_accounts, account_ids, card_ids, telegram_chat_id, notify_daily, notify_weekly, notify_monthly",
+    )
     .not("telegram_chat_id", "is", null);
 
   let sent = 0;
-  for (const profile of profiles ?? []) {
-    const chatId = profile.telegram_chat_id;
-    if (!chatId) continue;
-
-    const [{ data: bankRows }, { data: cardRows }] = await Promise.all([
-      supabaseAdmin
-        .from("transactions")
-        .select("id, description, amount, transaction_type, account_id")
-        .eq("user_id", profile.id)
-        .eq("source", "api")
-        .eq("transaction_date", yesterday)
-        .is("reviewed_at", null)
-        .neq("transaction_type", "transfer"),
-      supabaseAdmin
-        .from("credit_card_transactions")
-        .select("id, description, amount, card_id")
-        .eq("user_id", profile.id)
-        .eq("source", "api")
-        .eq("purchase_date", yesterday)
-        .is("reviewed_at", null),
-    ]);
-    const bank = bankRows ?? [];
-    const card = cardRows ?? [];
-    if (!bank.length && !card.length) continue;
-
-    const [{ data: accounts }, { data: cards }] = await Promise.all([
-      supabaseAdmin.from("accounts").select("id, name").eq("user_id", profile.id),
-      supabaseAdmin.from("credit_cards").select("id, name").eq("user_id", profile.id),
-    ]);
-    const accountName = new Map((accounts ?? []).map((a) => [a.id, a.name]));
-    const cardName = new Map((cards ?? []).map((c) => [c.id, c.name]));
-
-    const lines: string[] = [`📋 Gastos de ontem (${yesterday.split("-").reverse().join("/")}):`];
-    for (const row of bank) {
-      const sign = row.transaction_type === "income" ? "+" : "-";
-      lines.push(
-        `${sign} ${money(Number(row.amount))} · ${row.description} · ${accountName.get(row.account_id) ?? "conta"}`,
-      );
+  for (const row of recipientRows ?? []) {
+    if (!row.telegram_chat_id) continue;
+    const recipient = { ...toRecipient(row), telegram_chat_id: row.telegram_chat_id };
+    const frequencies: [Frequency, boolean][] = [
+      ["daily", row.notify_daily],
+      ["weekly", row.notify_weekly],
+      ["monthly", row.notify_monthly],
+    ];
+    for (const [freq, enabled] of frequencies) {
+      if (!enabled || !isScheduledToday(freq, now)) continue;
+      const didSend = await sendDigestForRecipient(supabaseAdmin, recipient, freq, now);
+      if (didSend) sent += 1;
     }
-    for (const row of card) {
-      lines.push(
-        `- ${money(Number(row.amount))} · ${row.description} · ${cardName.get(row.card_id) ?? "cartão"}`,
-      );
-    }
-    lines.push(
-      "",
-      'Responda descrevendo as categorias (ex.: "o Uber foi transporte, o resto foi mercado").',
-    );
-
-    await sendTelegramMessage(chatId, lines.join("\n"));
-    await supabaseAdmin.from("telegram_digests").insert({
-      user_id: profile.id,
-      chat_id: chatId,
-      transaction_ids: bank.map((r) => r.id),
-      card_transaction_ids: card.map((r) => r.id),
-    });
-    sent += 1;
   }
 
   return { sent };
