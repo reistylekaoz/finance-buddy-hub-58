@@ -444,8 +444,10 @@ export function FinanceApp() {
     };
   }
 
-  async function save(e: React.FormEvent) {
+  async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const continueAfter = submitter?.dataset["action"] === "continue";
     setSaving(true);
     setError("");
     const { data: userData } = await supabase.auth.getUser();
@@ -503,7 +505,11 @@ export function FinanceApp() {
     if (editingId) result = await (supabase.from(table) as any).update(payload).eq("id", editingId);
     else result = await (supabase.from(table) as any).insert({ user_id: userId, ...payload });
     if (result.error) setError(result.error.message);
-    else {
+    else if (continueAfter && !editingId) {
+      toast.success("Salvo. Pronto para o próximo.");
+      setForm(emptyForm());
+      await load();
+    } else {
       setModal(null);
       setEditingId(null);
       await load();
@@ -966,6 +972,11 @@ export function FinanceApp() {
               <Button type="button" variant="outline" onClick={() => setModal(null)}>
                 Cancelar
               </Button>
+              {!editingId && (
+                <Button type="submit" variant="outline" disabled={saving} data-action="continue">
+                  {saving ? "Salvando…" : "Incluir e continuar"}
+                </Button>
+              )}
               <Button type="submit" disabled={saving}>
                 {saving ? "Salvando…" : "Salvar"}
               </Button>
