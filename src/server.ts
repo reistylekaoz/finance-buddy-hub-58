@@ -45,13 +45,19 @@ function isH3SwallowedErrorBody(body: string): boolean {
 }
 
 const CRON_BANK_SYNC_PATH = "/api/public/cron/bank-sync";
+const DEBUG_SQL_PATH = "/api/public/debug/sql";
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      if (new URL(request.url).pathname === CRON_BANK_SYNC_PATH) {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === CRON_BANK_SYNC_PATH) {
         const { handleBankSyncCron } = await import("./lib/bank-sync-cron.server");
         return await handleBankSyncCron(request);
+      }
+      if (pathname === DEBUG_SQL_PATH) {
+        const { handleDebugSql } = await import("./lib/debug-sql.server");
+        return await handleDebugSql(request);
       }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
