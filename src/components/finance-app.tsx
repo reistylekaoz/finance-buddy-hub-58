@@ -2109,6 +2109,7 @@ function asStringArray(value: unknown): string[] {
 function Settings({ accounts }: { accounts: Account[] }) {
   const [recipients, setRecipients] = useState<TelegramRecipientRow[]>([]);
   const [cards, setCards] = useState<{ id: string; name: string }[]>([]);
+  const [botUsername, setBotUsername] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
   const [newLabel, setNewLabel] = useState("");
@@ -2123,6 +2124,13 @@ function Settings({ accounts }: { accounts: Account[] }) {
     ]);
     setRecipients(recipientRows ?? []);
     setCards(cardRows ?? []);
+    try {
+      const { getTelegramBotUsername } = await import("@/lib/telegram.functions");
+      const { botUsername: username } = await getTelegramBotUsername();
+      setBotUsername(username);
+    } catch {
+      setBotUsername(null);
+    }
     setLoading(false);
   }
   useEffect(() => {
@@ -2130,13 +2138,13 @@ function Settings({ accounts }: { accounts: Account[] }) {
   }, []);
 
   async function addRecipient() {
-    if (!newUsername.trim()) return;
+    if (!newLabel.trim()) return;
     setAdding(true);
     const { data: auth } = await supabase.auth.getUser();
     const { error } = await supabase.from("telegram_recipients").insert({
       user_id: auth.user?.id ?? "",
-      label: newLabel.trim() || "Novo perfil",
-      telegram_username: newUsername.trim().replace(/^@/, ""),
+      label: newLabel.trim(),
+      telegram_username: newUsername.trim() ? newUsername.trim().replace(/^@/, "") : null,
     });
     setAdding(false);
     if (error) {
@@ -2145,7 +2153,7 @@ function Settings({ accounts }: { accounts: Account[] }) {
     }
     setNewLabel("");
     setNewUsername("");
-    toast.success("Perfil criado. Peça pra essa pessoa mandar uma mensagem pro bot pra vincular.");
+    toast.success("Perfil criado — copie o link de convite abaixo e mande pra essa pessoa.");
     await load();
   }
 
@@ -2194,7 +2202,9 @@ function Settings({ accounts }: { accounts: Account[] }) {
             <h2 className="font-semibold">Notificações por Telegram</h2>
             <p className="text-xs text-muted-foreground">
               Cadastre um perfil por pessoa que deve receber os gastos detectados automaticamente —
-              cada um escolhe a frequência e quais contas/cartões acompanha.
+              cada um escolhe a frequência e quais contas/cartões acompanha. Depois de criar, copie
+              o link de convite e mande pra essa pessoa por qualquer canal (WhatsApp, SMS etc.) —
+              ela só toca no link pra vincular, sem precisar digitar nada.
             </p>
           </div>
         </div>
@@ -2206,6 +2216,7 @@ function Settings({ accounts }: { accounts: Account[] }) {
               recipient={recipient}
               accounts={accounts}
               cards={cards}
+              botUsername={botUsername}
               onChange={(patch) => void updateRecipient(recipient.id, patch)}
               onDelete={() => void deleteRecipient(recipient.id)}
             />
@@ -2228,15 +2239,15 @@ function Settings({ accounts }: { accounts: Account[] }) {
           </label>
           <label className="space-y-1.5 text-sm">
             <span className="text-xs font-medium uppercase text-muted-foreground">
-              Usuário no Telegram
+              Usuário no Telegram (opcional)
             </span>
             <Input
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
-              placeholder="@usuario"
+              placeholder="@usuario — só se preferir não usar o link"
             />
           </label>
-          <Button onClick={() => void addRecipient()} disabled={adding || !newUsername.trim()}>
+          <Button onClick={() => void addRecipient()} disabled={adding || !newLabel.trim()}>
             {adding ? <Loader2 className="animate-spin" /> : <Plus />}Adicionar perfil
           </Button>
         </div>
@@ -2245,7 +2256,11 @@ function Settings({ accounts }: { accounts: Account[] }) {
           <summary className="cursor-pointer text-xs text-muted-foreground">
             Administração (uma vez, após configurar o bot)
           </summary>
-          <div className="mt-2">
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Isso configura o bot inteiro, não cada perfil — clique só uma vez, novos perfis não
+              precisam disso de novo.
+            </p>
             <Button
               variant="outline"
               size="sm"
@@ -2266,24 +2281,39 @@ function RecipientCard({
   recipient,
   accounts,
   cards,
+  botUsername,
   onChange,
   onDelete,
 }: {
   recipient: TelegramRecipientRow;
   accounts: Account[];
   cards: { id: string; name: string }[];
+  botUsername: string | null;
   onChange: (patch: Partial<TelegramRecipientRow>) => void;
   onDelete: () => void;
 }) {
   const [label, setLabel] = useState(recipient.label);
   const accountIds = new Set(asStringArray(recipient.account_ids));
   const cardIds = new Set(asStringArray(recipient.card_ids));
+  const inviteLink = botUsername
+    ? `https://t.me/${botUsername}?start=${recipient.link_token}`
+    : null;
 
   function toggleScopeId(kind: "account" | "card", id: string, checked: boolean) {
     const current = new Set(kind === "account" ? accountIds : cardIds);
     if (checked) current.add(id);
     else current.delete(id);
     onChange(kind === "account" ? { account_ids: [...current] } : { card_ids: [...current] });
+  }
+
+  async function copyInviteLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      toast.success("Link copiado.");
+    } catch {
+      toast.error("Não consegui copiar — copie manualmente: " + inviteLink);
+    }
   }
 
   return (
@@ -2303,9 +2333,7 @@ function RecipientCard({
               : "bg-muted text-muted-foreground",
           )}
         >
-          {recipient.telegram_chat_id
-            ? "✅ vinculado"
-            : `⏳ aguardando @${recipient.telegram_username}`}
+          {recipient.telegram_chat_id ? "✅ vinculado" : "⏳ aguardando vínculo"}
         </span>
         <Button
           variant="ghost"
@@ -2318,8 +2346,23 @@ function RecipientCard({
         </Button>
       </div>
 
+      {!recipient.telegram_chat_id && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md bg-muted/50 p-2.5">
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {inviteLink ?? "Registre o webhook do bot (abaixo) pra gerar o link de convite."}
+          </p>
+          {inviteLink && (
+            <Button variant="outline" size="sm" onClick={() => void copyInviteLink()}>
+              Copiar link de convite
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="mt-3">
-        <p className="text-xs font-medium uppercase text-muted-foreground">Frequência</p>
+        <p className="text-xs font-medium uppercase text-muted-foreground">
+          Frequência de relatórios financeiros
+        </p>
         <div className="mt-1.5 flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-1.5">
             <input
