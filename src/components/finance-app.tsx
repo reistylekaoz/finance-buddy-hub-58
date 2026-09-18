@@ -29,6 +29,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
@@ -337,6 +348,12 @@ export function FinanceApp() {
   }, [costCenters, transactions, accountCurrency]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    type: Exclude<Modal, null>;
+    id: string;
+    label: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   function open(type: Exclude<Modal, null>) {
     setError("");
     setForm(emptyForm());
@@ -404,11 +421,20 @@ export function FinanceApp() {
     cost_center: "cost_centers",
     transaction: "transactions",
   };
-  async function remove(type: Exclude<Modal, null>, id: string, label: string) {
-    if (!window.confirm(`Excluir "${label}"? Essa ação não pode ser desfeita.`)) return;
+  function remove(type: Exclude<Modal, null>, id: string, label: string) {
+    setPendingDelete({ type, id, label });
+  }
+  async function confirmPendingDelete() {
+    if (!pendingDelete) return;
+    const { type, id } = pendingDelete;
+    setDeleting(true);
     const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
-    if (delError) window.alert(`Não foi possível excluir: ${delError.message}`);
-    else await load();
+    setDeleting(false);
+    if (delError) toast.error(`Não foi possível excluir: ${delError.message}`);
+    else {
+      setPendingDelete(null);
+      await load();
+    }
   }
   function field(key: keyof FormState) {
     return {
@@ -701,6 +727,29 @@ export function FinanceApp() {
           )}
         </main>
       </div>
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(openState) => !openState && setPendingDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir {pendingDelete?.label}?</AlertDialogTitle>
+            <AlertDialogDescription>Essa ação não pode ser desfeita.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmPendingDelete();
+              }}
+            >
+              {deleting ? "Excluindo…" : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={modal !== null} onOpenChange={(openState) => !openState && setModal(null)}>
         <DialogContent>
           <DialogHeader>
