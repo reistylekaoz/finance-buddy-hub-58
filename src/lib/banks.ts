@@ -2,18 +2,19 @@ export type Bank = {
   name: string;
   short: string;
   color: string;
+  logo?: string;
 };
 
-// Sem acesso a arquivos de logo oficiais, cada banco recebe um selo colorido
-// com a sigla — mesma ideia de um logo, sem depender de assets externos.
+// Bancos com arquivo em public/banks/ usam a logo real; os demais caem no
+// selo colorido com a sigla (ver BankBadge em finance-app.tsx).
 export const BANKS: Bank[] = [
   { name: "Banco do Brasil", short: "BB", color: "#FFCC29" },
   { name: "Itaú Unibanco", short: "Itaú", color: "#EC7000" },
   { name: "Bradesco", short: "Brad", color: "#CC092F" },
   { name: "Santander", short: "Sant", color: "#EC0000" },
   { name: "Caixa Econômica Federal", short: "CEF", color: "#0033A0" },
-  { name: "Nubank", short: "Nu", color: "#820AD1" },
-  { name: "Banco Inter", short: "Inter", color: "#FF7A00" },
+  { name: "Nubank", short: "Nu", color: "#820AD1", logo: "/banks/nubank.png" },
+  { name: "Banco Inter", short: "Inter", color: "#FF7A00", logo: "/banks/inter.png" },
   { name: "C6 Bank", short: "C6", color: "#1B1B1B" },
   { name: "BTG Pactual", short: "BTG", color: "#003399" },
   { name: "Sicoob", short: "Sico", color: "#00A651" },

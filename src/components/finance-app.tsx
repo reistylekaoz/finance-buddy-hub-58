@@ -1079,6 +1079,15 @@ function InstitutionField({
 function BankBadge({ institution }: { institution: string | null }) {
   if (!institution) return <Landmark className="text-primary" />;
   const bank = bankByName(institution);
+  if (bank?.logo)
+    return (
+      <img
+        src={bank.logo}
+        alt={bank.name}
+        title={bank.name}
+        className="size-full rounded-md object-cover"
+      />
+    );
   return (
     <span
       className="grid size-full place-items-center rounded-md text-xs font-semibold text-white"
