@@ -21,10 +21,13 @@ import {
   CircleDollarSign,
   Landmark,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Menu,
   Pencil,
   Plus,
+  Send,
+  Settings as SettingsIcon,
   Trash2,
   Shapes,
   TrendingUp,
@@ -77,7 +80,8 @@ type View =
   | "bank_connections"
   | "categories"
   | "cost_centers"
-  | "assets";
+  | "assets"
+  | "settings";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string;
@@ -165,6 +169,7 @@ const nav = [
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
+  { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
 ];
 const selectClass =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
@@ -937,6 +942,7 @@ export function FinanceApp() {
                   onDelete={(a: Asset) => remove("asset", a.id, a.name)}
                 />
               )}
+              {view === "settings" && <Settings />}
             </>
           )}
         </main>
@@ -2090,6 +2096,118 @@ function Assets({ assets, totals, onAdd, onEdit, onDelete }: any) {
           onAdd={onAdd}
         />
       )}
+    </div>
+  );
+}
+
+function Settings() {
+  const [telegramUsername, setTelegramUsername] = useState("");
+  const [linked, setLinked] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [registering, setRegistering] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("telegram_username, telegram_chat_id")
+        .maybeSingle();
+      setTelegramUsername(data?.telegram_username ?? "");
+      setLinked(!!data?.telegram_chat_id);
+      setLoading(false);
+    })();
+  }, []);
+
+  async function saveTelegramUsername() {
+    setSaving(true);
+    const clean = telegramUsername.trim().replace(/^@/, "");
+    const { error } = await supabase
+      .from("profiles")
+      .update({ telegram_username: clean || null })
+      .eq("id", (await supabase.auth.getUser()).data.user?.id ?? "");
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setTelegramUsername(clean);
+    toast.success("Usuário do Telegram salvo. Agora mande uma mensagem para o bot pra vincular.");
+  }
+
+  async function setupWebhook() {
+    setRegistering(true);
+    try {
+      const { registerTelegramWebhook } = await import("@/lib/telegram.functions");
+      const { webhookUrl } = await registerTelegramWebhook({
+        data: { baseUrl: window.location.origin },
+      });
+      toast.success(`Webhook registrado: ${webhookUrl}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao registrar o webhook.");
+    } finally {
+      setRegistering(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="grid min-h-[40vh] place-items-center text-sm text-muted-foreground">
+        Carregando configurações…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-3">
+          <Send className="size-6 text-primary" />
+          <div>
+            <h2 className="font-semibold">Notificações por Telegram</h2>
+            <p className="text-xs text-muted-foreground">
+              Todo dia de manhã o bot manda os gastos detectados no dia anterior — responda a
+              mensagem descrevendo as categorias e eu categorizo pra você.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <label className="space-y-1.5 text-sm">
+            <span className="text-xs font-medium uppercase text-muted-foreground">
+              Seu usuário no Telegram
+            </span>
+            <Input
+              value={telegramUsername}
+              onChange={(e) => setTelegramUsername(e.target.value)}
+              placeholder="@seu_usuario"
+            />
+          </label>
+          <Button onClick={() => void saveTelegramUsername()} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" /> : null}Salvar
+          </Button>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Status: {linked ? "✅ vinculado ao Telegram" : "⏳ ainda não vinculado"}
+          {!linked &&
+            " — depois de salvar o usuário, abra o bot no Telegram e mande qualquer mensagem pra vincular."}
+        </p>
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Administração (uma vez, após configurar o bot)
+          </summary>
+          <div className="mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void setupWebhook()}
+              disabled={registering}
+            >
+              {registering ? <Loader2 className="animate-spin" /> : null}Registrar webhook do
+              Telegram
+            </Button>
+          </div>
+        </details>
+      </section>
     </div>
   );
 }

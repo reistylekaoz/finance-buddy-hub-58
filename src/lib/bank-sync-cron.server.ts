@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
 import { createSupportTicket, syncConnection } from "@/lib/pluggy.functions";
+import { sendDailyDigests } from "@/lib/telegram.server";
 
 // Disparado diariamente às 01:00 pelo agendador da Lovable Cloud (protegido
 // por LOVABLE_CRON_SECRET) para trazer as movimentações do dia anterior de
@@ -41,7 +42,14 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
     }
   }
 
-  return new Response(JSON.stringify({ synced, failed }), {
+  let digestsSent = 0;
+  try {
+    digestsSent = (await sendDailyDigests(supabaseAdmin)).sent;
+  } catch (digestError) {
+    console.error("[telegram digest]", digestError);
+  }
+
+  return new Response(JSON.stringify({ synced, failed, digestsSent }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
