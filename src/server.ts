@@ -44,9 +44,15 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+const CRON_BANK_SYNC_PATH = "/api/cron/bank-sync";
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      if (new URL(request.url).pathname === CRON_BANK_SYNC_PATH) {
+        const { handleBankSyncCron } = await import("./lib/bank-sync-cron.server");
+        return await handleBankSyncCron(request);
+      }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);
