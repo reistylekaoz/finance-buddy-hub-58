@@ -16,8 +16,10 @@ export type Database = {
     Tables: {
       accounts: {
         Row: {
+          account_number: string | null
           account_type: Database["public"]["Enums"]["account_type"]
           bank_connection_id: string | null
+          branch_number: string | null
           color: string
           created_at: string
           currency: string
@@ -26,13 +28,16 @@ export type Database = {
           institution: string | null
           is_active: boolean
           name: string
+          owner_name: string | null
           pluggy_account_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          account_number?: string | null
           account_type?: Database["public"]["Enums"]["account_type"]
           bank_connection_id?: string | null
+          branch_number?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -41,13 +46,16 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name: string
+          owner_name?: string | null
           pluggy_account_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          account_number?: string | null
           account_type?: Database["public"]["Enums"]["account_type"]
           bank_connection_id?: string | null
+          branch_number?: string | null
           color?: string
           created_at?: string
           currency?: string
@@ -56,6 +64,7 @@ export type Database = {
           institution?: string | null
           is_active?: boolean
           name?: string
+          owner_name?: string | null
           pluggy_account_id?: string | null
           updated_at?: string
           user_id?: string
@@ -366,6 +375,8 @@ export type Database = {
           display_name: string
           id: string
           preferred_currency: string
+          telegram_chat_id: string | null
+          telegram_username: string | null
           updated_at: string
         }
         Insert: {
@@ -373,6 +384,8 @@ export type Database = {
           display_name?: string
           id: string
           preferred_currency?: string
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           updated_at?: string
         }
         Update: {
@@ -380,6 +393,8 @@ export type Database = {
           display_name?: string
           id?: string
           preferred_currency?: string
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -427,6 +442,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      telegram_digests: {
+        Row: {
+          card_transaction_ids: Json
+          chat_id: string
+          id: string
+          resolved_at: string | null
+          sent_at: string
+          transaction_ids: Json
+          user_id: string
+        }
+        Insert: {
+          card_transaction_ids?: Json
+          chat_id: string
+          id?: string
+          resolved_at?: string | null
+          sent_at?: string
+          transaction_ids?: Json
+          user_id: string
+        }
+        Update: {
+          card_transaction_ids?: Json
+          chat_id?: string
+          id?: string
+          resolved_at?: string | null
+          sent_at?: string
+          transaction_ids?: Json
+          user_id?: string
+        }
+        Relationships: []
       }
       transactions: {
         Row: {
