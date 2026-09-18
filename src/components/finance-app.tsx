@@ -56,6 +56,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
+import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import type { Database } from "@/integrations/supabase/types";
@@ -72,6 +73,7 @@ type View =
   | "transactions"
   | "import"
   | "credit_cards"
+  | "bank_connections"
   | "categories"
   | "cost_centers"
   | "assets";
@@ -158,6 +160,7 @@ const nav = [
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
   { id: "import" as const, label: "Importar extrato", icon: FileUp },
   { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
+  { id: "bank_connections" as const, label: "Conexões bancárias", icon: Landmark },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
@@ -797,7 +800,7 @@ export function FinanceApp() {
                 </h1>
               </div>
             </div>
-            {view !== "import" && view !== "credit_cards" && (
+            {view !== "import" && view !== "credit_cards" && view !== "bank_connections" && (
               <Button
                 onClick={() =>
                   open(
@@ -885,6 +888,7 @@ export function FinanceApp() {
                   centerName={centerName}
                 />
               )}
+              {view === "bank_connections" && <BankConnections onSynced={load} />}
               {view === "categories" && (
                 <Categories
                   categories={categories}
