@@ -14,6 +14,7 @@ import {
 import {
   ArrowRightLeft,
   Building2,
+  Check,
   FileUp,
   ChevronRight,
   CircleDollarSign,
@@ -87,6 +88,7 @@ type FormState = {
   description: string;
   center_type: string;
   cost_center_id: string;
+  status: string;
 };
 const emptyForm = (): FormState => ({
   name: "",
@@ -109,6 +111,7 @@ const emptyForm = (): FormState => ({
   description: "",
   center_type: "property",
   cost_center_id: "",
+  status: "confirmed",
 });
 const centerTypeLabel: Record<string, string> = {
   property: "Imóvel",
@@ -214,10 +217,15 @@ export function FinanceApp() {
     () => new Set(accounts.filter((a) => a.is_active).map((a) => a.id)),
     [accounts],
   );
+  // provisões (previsões ainda não confirmadas) não afetam saldo nem relatórios.
+  const confirmedTransactions = useMemo(
+    () => transactions.filter((t) => t.status !== "provisioned"),
+    [transactions],
+  );
   // contas marcadas para não entrar nos relatórios ficam de fora do dashboard.
   const reportableTransactions = useMemo(
-    () => transactions.filter((t) => reportableAccountIds.has(t.account_id)),
-    [transactions, reportableAccountIds],
+    () => confirmedTransactions.filter((t) => reportableAccountIds.has(t.account_id)),
+    [confirmedTransactions, reportableAccountIds],
   );
   const sortCurrencies = (keys: string[]) =>
     [...keys].sort((a, b) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
@@ -233,7 +241,7 @@ export function FinanceApp() {
   const balanceByAccount = useMemo(
     () =>
       accounts.map((account) => {
-        const delta = transactions.reduce((sum, tx) => {
+        const delta = confirmedTransactions.reduce((sum, tx) => {
           if (tx.transaction_type === "income" && tx.account_id === account.id)
             return sum + Number(tx.amount);
           if (tx.transaction_type === "expense" && tx.account_id === account.id)
@@ -254,7 +262,7 @@ export function FinanceApp() {
           balanceBRL: rate !== null ? balance * rate : null,
         };
       }),
-    [accounts, transactions, rates],
+    [accounts, confirmedTransactions, rates],
   );
 
   const totals = useMemo(() => {
@@ -395,6 +403,35 @@ export function FinanceApp() {
     label: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingTx, setConfirmingTx] = useState<Transaction | null>(null);
+  const [confirmDate, setConfirmDate] = useState("");
+  const [confirmAmount, setConfirmAmount] = useState("0.00");
+  const [confirming, setConfirming] = useState(false);
+  function openConfirmProvision(tx: Transaction) {
+    setConfirmingTx(tx);
+    setConfirmDate(tx.transaction_date);
+    setConfirmAmount(String(tx.amount));
+  }
+  async function confirmProvision(e: React.FormEvent) {
+    e.preventDefault();
+    if (!confirmingTx) return;
+    setConfirming(true);
+    const { error: err } = await supabase
+      .from("transactions")
+      .update({
+        status: "confirmed",
+        transaction_date: confirmDate,
+        amount: Number(confirmAmount),
+      })
+      .eq("id", confirmingTx.id);
+    setConfirming(false);
+    if (err) toast.error(`Não foi possível confirmar: ${err.message}`);
+    else {
+      toast.success("Lançamento confirmado.");
+      setConfirmingTx(null);
+      await load();
+    }
+  }
   function open(type: Exclude<Modal, null>) {
     setError("");
     setForm(emptyForm());
@@ -451,6 +488,7 @@ export function FinanceApp() {
         transaction_date: row.transaction_date,
         description: row.description,
         notes: row.notes ?? "",
+        status: row.status ?? "confirmed",
       });
     setModal(type);
   }
@@ -544,6 +582,7 @@ export function FinanceApp() {
                   transaction_date: form.transaction_date,
                   description: form.description,
                   notes: form.notes || null,
+                  status: form.transaction_type === "transfer" ? "confirmed" : form.status,
                 };
     const table = tableOf[modal];
     if (editingId) result = await (supabase.from(table) as any).update(payload).eq("id", editingId);
@@ -741,6 +780,7 @@ export function FinanceApp() {
                   onAdd={() => open("transaction")}
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
+                  onConfirmTx={openConfirmProvision}
                 />
               )}
               {view === "import" && (
@@ -804,6 +844,40 @@ export function FinanceApp() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        open={confirmingTx !== null}
+        onOpenChange={(openState) => !openState && setConfirmingTx(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar lançamento</DialogTitle>
+            <DialogDescription>
+              Informe a data e o valor que de fato afetarão a conta.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={confirmProvision} className="space-y-4">
+            <Field label="Data de confirmação">
+              <Input
+                required
+                type="date"
+                value={confirmDate}
+                onChange={(e) => setConfirmDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Valor confirmado">
+              <CurrencyInput value={confirmAmount} onChange={setConfirmAmount} />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setConfirmingTx(null)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={confirming}>
+                {confirming ? "Confirmando…" : "Confirmar"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={modal !== null} onOpenChange={(openState) => !openState && setModal(null)}>
         <DialogContent>
           <DialogHeader>
@@ -974,10 +1048,26 @@ export function FinanceApp() {
                       onChange={(v) => setForm((f) => ({ ...f, amount: v }))}
                     />
                   </Field>
-                  <Field label="Data">
+                  <Field label={form.status === "provisioned" ? "Data prevista" : "Data"}>
                     <Input required type="date" {...field("transaction_date")} />
                   </Field>
                 </div>
+                {form.transaction_type !== "transfer" && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4 rounded border-input"
+                      checked={form.status === "provisioned"}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          status: e.target.checked ? "provisioned" : "confirmed",
+                        }))
+                      }
+                    />
+                    Provisão (previsão futura, ainda não executada)
+                  </label>
+                )}
                 <Field label={form.transaction_type === "transfer" ? "Conta de origem" : "Conta"}>
                   <select required className={selectClass} {...field("account_id")}>
                     <option value="">Selecione</option>
@@ -1465,6 +1555,7 @@ function TransactionRows({
   centerName,
   onEditTx,
   onDeleteTx,
+  onConfirmTx,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -1472,23 +1563,35 @@ function TransactionRows({
   centerName: (id: string | null) => string;
   onEditTx?: (tx: Transaction) => void;
   onDeleteTx?: (tx: Transaction) => void;
+  onConfirmTx?: (tx: Transaction) => void;
 }) {
   return (
     <div className="divide-y divide-border">
       {transactions.map((tx) => {
         const positive = tx.transaction_type === "income";
+        const provisioned = tx.status === "provisioned";
         const account = accounts.find((a) => a.id === tx.account_id);
         const currency = account?.currency || "BRL";
         return (
           <div
             key={tx.id}
-            className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto_auto]"
+            className={cn(
+              "grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto_auto]",
+              provisioned && "bg-muted/20",
+            )}
           >
             <span className="hidden text-xs text-muted-foreground sm:block">
               {dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}
             </span>
             <div>
-              <p className="text-sm font-medium">{tx.description}</p>
+              <p className="text-sm font-medium">
+                {tx.description}
+                {provisioned && (
+                  <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-normal text-amber-600">
+                    Previsto
+                  </span>
+                )}
+              </p>
               <p className="text-xs text-muted-foreground sm:hidden">
                 {dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}
               </p>
@@ -1515,9 +1618,22 @@ function TransactionRows({
               {positive ? "+" : tx.transaction_type === "expense" ? "−" : ""}
               {formatCurrency(Number(tx.amount), currency)}
             </span>
-            {onEditTx && onDeleteTx && (
-              <RowActions onEdit={() => onEditTx(tx)} onDelete={() => onDeleteTx(tx)} />
-            )}
+            <div className="flex items-center gap-1">
+              {provisioned && onConfirmTx && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Confirmar"
+                  className="text-income"
+                  onClick={() => onConfirmTx(tx)}
+                >
+                  <Check className="size-4" />
+                </Button>
+              )}
+              {onEditTx && onDeleteTx && (
+                <RowActions onEdit={() => onEditTx(tx)} onDelete={() => onDeleteTx(tx)} />
+              )}
+            </div>
           </div>
         );
       })}
@@ -1537,6 +1653,7 @@ function Transactions({
   onAdd,
   onEditTx,
   onDeleteTx,
+  onConfirmTx,
 }: any) {
   if (!transactions.length)
     return (
@@ -1546,17 +1663,26 @@ function Transactions({
         onAdd={onAdd}
       />
     );
+  const pendingCount = transactions.filter((t: Transaction) => t.status === "provisioned").length;
   return (
-    <section className="rounded-lg border border-border bg-card">
-      <TransactionRows
-        transactions={transactions}
-        accounts={accounts}
-        categoryPath={categoryPath}
-        centerName={centerName}
-        onEditTx={onEditTx}
-        onDeleteTx={onDeleteTx}
-      />
-    </section>
+    <div className="space-y-3">
+      {pendingCount > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {pendingCount} provisão{pendingCount === 1 ? "" : "ões"} aguardando confirmação.
+        </p>
+      )}
+      <section className="rounded-lg border border-border bg-card">
+        <TransactionRows
+          transactions={transactions}
+          accounts={accounts}
+          categoryPath={categoryPath}
+          centerName={centerName}
+          onEditTx={onEditTx}
+          onDeleteTx={onDeleteTx}
+          onConfirmTx={onConfirmTx}
+        />
+      </section>
+    </div>
   );
 }
 function CostCenters({ rows, onAdd, onEdit, onDelete }: any) {
