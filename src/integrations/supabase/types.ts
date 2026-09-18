@@ -375,6 +375,8 @@ export type Database = {
           display_name: string
           id: string
           preferred_currency: string
+          telegram_chat_id: string | null
+          telegram_username: string | null
           updated_at: string
         }
         Insert: {
@@ -382,6 +384,8 @@ export type Database = {
           display_name?: string
           id: string
           preferred_currency?: string
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           updated_at?: string
         }
         Update: {
@@ -389,6 +393,8 @@ export type Database = {
           display_name?: string
           id?: string
           preferred_currency?: string
+          telegram_chat_id?: string | null
+          telegram_username?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -442,7 +448,6 @@ export type Database = {
           card_transaction_ids: Json
           chat_id: string
           id: string
-          recipient_id: string | null
           resolved_at: string | null
           sent_at: string
           transaction_ids: Json
@@ -452,7 +457,6 @@ export type Database = {
           card_transaction_ids?: Json
           chat_id: string
           id?: string
-          recipient_id?: string | null
           resolved_at?: string | null
           sent_at?: string
           transaction_ids?: Json
@@ -462,66 +466,9 @@ export type Database = {
           card_transaction_ids?: Json
           chat_id?: string
           id?: string
-          recipient_id?: string | null
           resolved_at?: string | null
           sent_at?: string
           transaction_ids?: Json
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "telegram_digests_recipient_id_fkey"
-            columns: ["recipient_id"]
-            isOneToOne: false
-            referencedRelation: "telegram_recipients"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      telegram_recipients: {
-        Row: {
-          account_ids: Json
-          all_accounts: boolean
-          card_ids: Json
-          created_at: string
-          id: string
-          label: string
-          notify_daily: boolean
-          notify_monthly: boolean
-          notify_weekly: boolean
-          telegram_chat_id: string | null
-          telegram_username: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          account_ids?: Json
-          all_accounts?: boolean
-          card_ids?: Json
-          created_at?: string
-          id?: string
-          label?: string
-          notify_daily?: boolean
-          notify_monthly?: boolean
-          notify_weekly?: boolean
-          telegram_chat_id?: string | null
-          telegram_username: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          account_ids?: Json
-          all_accounts?: boolean
-          card_ids?: Json
-          created_at?: string
-          id?: string
-          label?: string
-          notify_daily?: boolean
-          notify_monthly?: boolean
-          notify_weekly?: boolean
-          telegram_chat_id?: string | null
-          telegram_username?: string
-          updated_at?: string
           user_id?: string
         }
         Relationships: []
