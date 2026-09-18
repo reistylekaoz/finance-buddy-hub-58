@@ -30,6 +30,7 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
 type CreditCardRow = Database["public"]["Tables"]["credit_cards"]["Row"];
 type CardTransaction = Database["public"]["Tables"]["credit_card_transactions"]["Row"];
+type Account = Database["public"]["Tables"]["accounts"]["Row"];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const selectClass =
@@ -171,11 +172,13 @@ export function CreditCards({
   costCenters,
   categoryPath,
   centerName,
+  accounts,
 }: {
   categories: Category[];
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
+  accounts: Account[];
 }) {
   const [cards, setCards] = useState<CreditCardRow[]>([]);
   const [txs, setTxs] = useState<CardTransaction[]>([]);
@@ -198,6 +201,15 @@ export function CreditCards({
     label: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [payTarget, setPayTarget] = useState<{
+    cardId: string;
+    invoiceKey: string;
+    label: string;
+    total: number;
+  } | null>(null);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [payingInvoice, setPayingInvoice] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -362,25 +374,54 @@ export function CreditCards({
     await load();
   }
 
-  async function payInvoice(cardId: string, invoiceKey: string) {
-    const card = cards.find((c) => c.id === cardId);
+  function openPayInvoice(cardId: string, invoiceKey: string, label: string, total: number) {
+    setPayTarget({ cardId, invoiceKey, label, total });
+    setPayAccountId(accounts[0]?.id ?? "");
+  }
+  async function confirmPayInvoice(e: React.FormEvent) {
+    e.preventDefault();
+    if (!payTarget || !payAccountId) return;
+    const card = cards.find((c) => c.id === payTarget.cardId);
     if (!card) return;
+    setPayingInvoice(true);
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) {
+      setPayingInvoice(false);
+      return;
+    }
     const ids = txs
-      .filter((t) => t.card_id === cardId && !t.paid_at)
+      .filter((t) => t.card_id === payTarget.cardId && !t.paid_at)
       .filter(
-        (t) => invoiceInfo(t.purchase_date, card.closing_day, card.due_day).key === invoiceKey,
+        (t) =>
+          invoiceInfo(t.purchase_date, card.closing_day, card.due_day).key === payTarget.invoiceKey,
       )
       .map((t) => t.id);
-    if (!ids.length) return;
+    const { error: txError } = await supabase.from("transactions").insert({
+      user_id: userId,
+      transaction_type: "expense",
+      account_id: payAccountId,
+      amount: payTarget.total,
+      transaction_date: new Date().toISOString().slice(0, 10),
+      description: `Pagamento fatura ${card.name} — ${payTarget.label}`,
+      source: "manual",
+    });
+    if (txError) {
+      setPayingInvoice(false);
+      toast.error(txError.message);
+      return;
+    }
     const { error } = await supabase
       .from("credit_card_transactions")
       .update({ paid_at: new Date().toISOString() })
       .in("id", ids);
+    setPayingInvoice(false);
     if (error) {
       toast.error(error.message);
       return;
     }
-    toast.success("Fatura marcada como paga.");
+    toast.success("Fatura paga e lançada na conta.");
+    setPayTarget(null);
     await load();
   }
 
@@ -475,10 +516,22 @@ export function CreditCards({
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {money.format(used)} usados de {money.format(limit)}
-                      {limit > 0 ? ` (${pct.toFixed(0)}%)` : ""}
-                    </p>
+                    <div className="mt-2 grid grid-cols-3 gap-1 text-center">
+                      <div>
+                        <p className="text-[10px] uppercase text-muted-foreground">Limite</p>
+                        <p className="text-xs font-medium">{money.format(limit)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase text-muted-foreground">Usado</p>
+                        <p className="text-xs font-medium text-expense">{money.format(used)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase text-muted-foreground">Disponível</p>
+                        <p className="text-xs font-medium text-income">
+                          {money.format(Math.max(0, limit - used))}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                   <Button
                     variant="outline"
@@ -544,11 +597,17 @@ export function CreditCards({
                         <span className="rounded-full bg-income-soft px-3 py-1 text-xs font-medium text-income">
                           Paga
                         </span>
+                      ) : selectedCard.bank_connection_id ? (
+                        <span className="text-xs text-muted-foreground">
+                          Pagamento conciliado automaticamente pela integração bancária
+                        </span>
                       ) : (
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => void payInvoice(selectedCard.id, invoice.key)}
+                          onClick={() =>
+                            openPayInvoice(selectedCard.id, invoice.key, invoice.label, total)
+                          }
                         >
                           <Check />
                           Marcar fatura como paga
@@ -768,6 +827,37 @@ export function CreditCards({
             <Button type="submit" className="w-full" disabled={savingTx || !txForm.card_id}>
               {savingTx ? <Loader2 className="animate-spin" /> : null}
               Lançar despesa
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!payTarget} onOpenChange={(open) => !open && setPayTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pagar fatura</DialogTitle>
+            <DialogDescription>
+              De qual conta saiu o pagamento de {payTarget && money.format(payTarget.total)}
+              {payTarget ? ` (fatura de ${payTarget.label})` : ""}?
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={confirmPayInvoice} className="space-y-4">
+            <Field label="Conta de pagamento">
+              <select
+                className={selectClass}
+                value={payAccountId}
+                onChange={(e) => setPayAccountId(e.target.value)}
+              >
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Button type="submit" className="w-full" disabled={payingInvoice || !payAccountId}>
+              {payingInvoice ? <Loader2 className="animate-spin" /> : null}
+              Confirmar pagamento
             </Button>
           </form>
         </DialogContent>
