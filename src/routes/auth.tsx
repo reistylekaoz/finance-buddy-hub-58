@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
@@ -179,6 +179,19 @@ function AuthPage() {
                         : "Enviar link"}
                   <ArrowRight />
                 </Button>
+                {mode === "signup" && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    Ao criar sua conta, você concorda com os{" "}
+                    <Link to="/termos" className="text-primary hover:underline">
+                      Termos de Uso
+                    </Link>{" "}
+                    e a{" "}
+                    <Link to="/privacidade" className="text-primary hover:underline">
+                      Política de Privacidade
+                    </Link>
+                    .
+                  </p>
+                )}
               </form>
               {mode !== "forgot" && (
                 <>
