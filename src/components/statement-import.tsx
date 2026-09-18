@@ -71,6 +71,74 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring";
 
+const PAGE_SIZE_OPTIONS = [10, 20, 30] as const;
+
+function paginate<T>(items: T[], page: number, pageSize: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const clampedPage = Math.min(page, totalPages - 1);
+  const start = clampedPage * pageSize;
+  return { slice: items.slice(start, start + pageSize), page: clampedPage, totalPages };
+}
+
+function Pager({
+  total,
+  page,
+  totalPages,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  total: number;
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+}) {
+  if (!total) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground">
+      <span>
+        {total} lançamento{total === 1 ? "" : "s"} · página {page + 1} de {totalPages}
+      </span>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5">
+          Por página
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page <= 0}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Anterior
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages - 1}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Próxima
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function normalizeDate(raw: string): string | null {
   const value = raw.trim();
   let match = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(value);
@@ -209,6 +277,34 @@ export function StatementImport({
   const [cardEdits, setCardEdits] = useState<Record<string, PendingEdit>>({});
   const [pendingBusy, setPendingBusy] = useState(false);
   const [pendingMessage, setPendingMessage] = useState("");
+  const [bankPage, setBankPage] = useState(0);
+  const [bankPageSize, setBankPageSize] = useState<number>(20);
+  const [cardPage, setCardPage] = useState(0);
+  const [cardPageSize, setCardPageSize] = useState<number>(20);
+  const [ofxPage, setOfxPage] = useState(0);
+  const [ofxPageSize, setOfxPageSize] = useState<number>(20);
+
+  function applyAllBank(field: "category_id" | "cost_center_id", value: string) {
+    setBankEdits((current) => {
+      const next = { ...current };
+      for (const row of pendingBankTransactions) {
+        // linhas marcadas pra conciliar com uma provisão não usam categoria
+        // própria (herdam da provisão), então ficam de fora do "aplicar a todos".
+        if ((current[row.id] ?? emptyEdit).reconcile_with) continue;
+        next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+      }
+      return next;
+    });
+  }
+  function applyAllCards(field: "category_id" | "cost_center_id", value: string) {
+    setCardEdits((current) => {
+      const next = { ...current };
+      for (const row of pendingCardTxs) {
+        next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+      }
+      return next;
+    });
+  }
 
   async function loadPendingCards() {
     setPendingLoading(true);
@@ -480,6 +576,19 @@ export function StatementImport({
     await loadPendingCards();
   }
 
+  const bankPaged = useMemo(
+    () => paginate(pendingBankTransactions, bankPage, bankPageSize),
+    [pendingBankTransactions, bankPage, bankPageSize],
+  );
+  const cardPaged = useMemo(
+    () => paginate(pendingCardTxs, cardPage, cardPageSize),
+    [pendingCardTxs, cardPage, cardPageSize],
+  );
+  const ofxPaged = useMemo(
+    () => paginate(rows, ofxPage, ofxPageSize),
+    [rows, ofxPage, ofxPageSize],
+  );
+
   if (!accounts.length) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -504,12 +613,38 @@ export function StatementImport({
                 provisão já lançada.
               </p>
             </div>
-            <Button onClick={() => void savePendingBank()} disabled={pendingBusy}>
-              {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className={selectClass}
+                defaultValue=""
+                onChange={(event) => applyAllBank("category_id", event.target.value)}
+              >
+                <option value="">Aplicar categoria a todos</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {categoryPath(category.id)}
+                  </option>
+                ))}
+              </select>
+              <select
+                className={selectClass}
+                defaultValue=""
+                onChange={(event) => applyAllBank("cost_center_id", event.target.value)}
+              >
+                <option value="">Aplicar centro de custo a todos</option>
+                {costCenters.map((center) => (
+                  <option key={center.id} value={center.id}>
+                    {center.name}
+                  </option>
+                ))}
+              </select>
+              <Button onClick={() => void savePendingBank()} disabled={pendingBusy}>
+                {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
+              </Button>
+            </div>
           </div>
           <div className="divide-y divide-border">
-            {pendingBankTransactions.map((row) => {
+            {bankPaged.slice.map((row) => {
               const edit = bankEdits[row.id] ?? emptyEdit;
               const candidates = pendingCandidatesFor(row);
               const matched = edit.reconcile_with
@@ -608,6 +743,17 @@ export function StatementImport({
               );
             })}
           </div>
+          <Pager
+            total={pendingBankTransactions.length}
+            page={bankPaged.page}
+            totalPages={bankPaged.totalPages}
+            pageSize={bankPageSize}
+            onPageChange={setBankPage}
+            onPageSizeChange={(size) => {
+              setBankPageSize(size);
+              setBankPage(0);
+            }}
+          />
         </section>
       )}
 
@@ -620,12 +766,40 @@ export function StatementImport({
                 Vieram da sincronização do cartão de crédito. Só falta a categoria.
               </p>
             </div>
-            <Button onClick={() => void savePendingCards()} disabled={pendingBusy}>
-              {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className={selectClass}
+                defaultValue=""
+                onChange={(event) => applyAllCards("category_id", event.target.value)}
+              >
+                <option value="">Aplicar categoria a todos</option>
+                {categories
+                  .filter((category) => category.category_type === "expense")
+                  .map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {categoryPath(category.id)}
+                    </option>
+                  ))}
+              </select>
+              <select
+                className={selectClass}
+                defaultValue=""
+                onChange={(event) => applyAllCards("cost_center_id", event.target.value)}
+              >
+                <option value="">Aplicar centro de custo a todos</option>
+                {costCenters.map((center) => (
+                  <option key={center.id} value={center.id}>
+                    {center.name}
+                  </option>
+                ))}
+              </select>
+              <Button onClick={() => void savePendingCards()} disabled={pendingBusy}>
+                {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
+              </Button>
+            </div>
           </div>
           <div className="divide-y divide-border">
-            {pendingCardTxs.map((row) => {
+            {cardPaged.slice.map((row) => {
               const edit = cardEdits[row.id] ?? emptyEdit;
               const card = cards.find((c) => c.id === row.card_id);
               return (
@@ -685,6 +859,17 @@ export function StatementImport({
               );
             })}
           </div>
+          <Pager
+            total={pendingCardTxs.length}
+            page={cardPaged.page}
+            totalPages={cardPaged.totalPages}
+            pageSize={cardPageSize}
+            onPageChange={setCardPage}
+            onPageSizeChange={(size) => {
+              setCardPageSize(size);
+              setCardPage(0);
+            }}
+          />
         </section>
       )}
 
@@ -791,7 +976,7 @@ export function StatementImport({
             </div>
           </div>
           <div className="divide-y divide-border">
-            {rows.map((row) => {
+            {ofxPaged.slice.map((row) => {
               const candidates = candidatesFor(row);
               const matched = row.reconcile_with
                 ? candidatePool.find((p) => p.id === row.reconcile_with)
@@ -888,6 +1073,17 @@ export function StatementImport({
               );
             })}
           </div>
+          <Pager
+            total={rows.length}
+            page={ofxPaged.page}
+            totalPages={ofxPaged.totalPages}
+            pageSize={ofxPageSize}
+            onPageChange={setOfxPage}
+            onPageSizeChange={(size) => {
+              setOfxPageSize(size);
+              setOfxPage(0);
+            }}
+          />
         </section>
       )}
     </div>
