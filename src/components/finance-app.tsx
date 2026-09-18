@@ -157,6 +157,7 @@ export function FinanceApp() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [accountActive, setAccountActive] = useState(true);
 
   async function load() {
     setLoading(true);
@@ -207,6 +208,15 @@ export function FinanceApp() {
   const rateOf = (currency: string) => rates[currency] ?? 1;
   const currencyOf = (accountId: string | null) =>
     accountId ? (accountCurrency[accountId] ?? "BRL") : "BRL";
+  const reportableAccountIds = useMemo(
+    () => new Set(accounts.filter((a) => a.is_active).map((a) => a.id)),
+    [accounts],
+  );
+  // contas marcadas para não entrar nos relatórios ficam de fora do dashboard.
+  const reportableTransactions = useMemo(
+    () => transactions.filter((t) => reportableAccountIds.has(t.account_id)),
+    [transactions, reportableAccountIds],
+  );
   const sortCurrencies = (keys: string[]) =>
     [...keys].sort((a, b) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
   function sumByCurrency(items: Transaction[]): Record<string, number> {
@@ -241,7 +251,7 @@ export function FinanceApp() {
 
   const totals = useMemo(() => {
     const current = new Date();
-    const monthly = transactions.filter((tx) => {
+    const monthly = reportableTransactions.filter((tx) => {
       const d = new Date(`${tx.transaction_date}T12:00:00`);
       return d.getMonth() === current.getMonth() && d.getFullYear() === current.getFullYear();
     });
@@ -252,7 +262,7 @@ export function FinanceApp() {
         new Set([
           ...Object.keys(income),
           ...Object.keys(expense),
-          ...accounts.map((a) => a.currency || "BRL"),
+          ...accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"),
         ]),
       ),
     );
@@ -268,12 +278,14 @@ export function FinanceApp() {
     const liabilityTotal = assets
       .filter((a) => a.asset_type === "liability")
       .reduce((s, a) => s + Number(a.value), 0);
+    const reportableBalances = balanceByAccount.filter((a) => a.is_active);
     const balanceCurrencies = sortCurrencies(
-      Array.from(new Set(balanceByAccount.map((a) => a.currency))),
+      Array.from(new Set(reportableBalances.map((a) => a.currency))),
     );
     // saldo por moeda de origem das contas, sem converter — só o total geral é convertido para BRL.
+    // contas fora dos relatórios não entram em nenhum desses totais.
     const balanceByCurrency = balanceCurrencies.map((currency) => {
-      const accountsInCurrency = balanceByAccount.filter((a) => a.currency === currency);
+      const accountsInCurrency = reportableBalances.filter((a) => a.currency === currency);
       return {
         currency,
         balance: accountsInCurrency.reduce((s, a) => s + a.balance, 0),
@@ -284,15 +296,15 @@ export function FinanceApp() {
     return {
       byCurrency,
       balanceByCurrency,
-      balance: balanceByAccount.reduce((s, a) => s + a.balanceBRL, 0),
+      balance: reportableBalances.reduce((s, a) => s + a.balanceBRL, 0),
       assetTotal,
       liabilityTotal,
     };
-  }, [transactions, assets, balanceByAccount, accounts, accountCurrency]);
+  }, [reportableTransactions, assets, balanceByAccount, accounts]);
 
   const chartDataByCurrency = useMemo(() => {
     const currencies = sortCurrencies(
-      Array.from(new Set(accounts.map((a) => a.currency || "BRL"))),
+      Array.from(new Set(accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"))),
     );
     if (!currencies.length) currencies.push("BRL");
     return currencies.map((currency) => ({
@@ -300,7 +312,7 @@ export function FinanceApp() {
       data: Array.from({ length: 6 }, (_, index) => {
         const date = new Date();
         date.setMonth(date.getMonth() - (5 - index));
-        const rows = transactions.filter((tx) => {
+        const rows = reportableTransactions.filter((tx) => {
           const d = new Date(`${tx.transaction_date}T12:00:00`);
           return (
             d.getMonth() === date.getMonth() &&
@@ -319,11 +331,11 @@ export function FinanceApp() {
         };
       }),
     }));
-  }, [transactions, accounts, accountCurrency]);
+  }, [reportableTransactions, accounts]);
 
   const centerSummary = useMemo(() => {
     const rows = costCenters.map((center) => {
-      const own = transactions.filter(
+      const own = reportableTransactions.filter(
         (t) => t.cost_center_id === center.id && t.transaction_type !== "transfer",
       );
       const income = sumByCurrency(own.filter((t) => t.transaction_type === "income"));
@@ -333,7 +345,7 @@ export function FinanceApp() {
       );
       return { ...center, income, expense, currencies, count: own.length };
     });
-    const orphan = transactions.filter(
+    const orphan = reportableTransactions.filter(
       (t) => !t.cost_center_id && t.transaction_type !== "transfer",
     );
     if (orphan.length) {
@@ -359,7 +371,7 @@ export function FinanceApp() {
       } as (typeof rows)[number]);
     }
     return rows.sort((a, b) => b.count - a.count);
-  }, [costCenters, transactions, accountCurrency]);
+  }, [costCenters, reportableTransactions]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -371,12 +383,14 @@ export function FinanceApp() {
   function open(type: Exclude<Modal, null>) {
     setError("");
     setForm(emptyForm());
+    setAccountActive(true);
     setEditingId(null);
     setModal(type);
   }
   function edit(type: Exclude<Modal, null>, row: any) {
     setError("");
     setEditingId(row.id);
+    setAccountActive(type === "account" ? (row.is_active ?? true) : true);
     const base = emptyForm();
     if (type === "account")
       setForm({
@@ -480,6 +494,7 @@ export function FinanceApp() {
             account_type: form.account_type,
             currency: form.currency,
             initial_balance: Number(form.initial_balance || 0),
+            is_active: accountActive,
           }
         : modal === "category"
           ? {
@@ -684,7 +699,7 @@ export function FinanceApp() {
                   totals={totals}
                   rateDate={rateDate}
                   chartDataByCurrency={chartDataByCurrency}
-                  transactions={transactions}
+                  transactions={reportableTransactions}
                   accounts={accounts}
                   categoryPath={categoryPath}
                   centerName={centerName}
@@ -830,6 +845,15 @@ export function FinanceApp() {
                 <Field label="Saldo inicial">
                   <Input required type="number" step="0.01" {...field("initial_balance")} />
                 </Field>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input"
+                    checked={accountActive}
+                    onChange={(e) => setAccountActive(e.target.checked)}
+                  />
+                  Considerar nos relatórios e no dashboard
+                </label>
               </>
             )}
             {modal === "category" && (
