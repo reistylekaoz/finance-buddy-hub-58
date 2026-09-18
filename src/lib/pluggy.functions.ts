@@ -11,6 +11,9 @@ type PluggyAccount = {
   id: string;
   type: "BANK" | "CREDIT";
   name: string;
+  marketingName?: string | null;
+  number?: string | null;
+  owner?: string | null;
   balance: number;
   currencyCode?: string;
   creditData?: {
@@ -18,7 +21,25 @@ type PluggyAccount = {
     balanceCloseDate?: string;
     balanceDueDate?: string;
   };
+  bankData?: {
+    transferNumber?: string | null;
+  } | null;
 };
+
+// A Pluggy costuma devolver o identificador de transferência como
+// "agência/conta" (ex.: "0001/000123456-7"); sem "/", tratamos como só o
+// número da conta (agência fica em branco em vez de um valor errado).
+function splitTransferNumber(
+  transferNumber: string | null | undefined,
+  fallbackAccountNumber: string | null | undefined,
+): { branchNumber: string | null; accountNumber: string | null } {
+  const raw = transferNumber?.trim();
+  if (raw?.includes("/")) {
+    const [branch, account] = raw.split("/", 2);
+    return { branchNumber: branch?.trim() || null, accountNumber: account?.trim() || null };
+  }
+  return { branchNumber: null, accountNumber: raw || fallbackAccountNumber?.trim() || null };
+}
 
 type PluggyTransaction = {
   id: string;
@@ -243,13 +264,25 @@ export async function syncConnection(
         .maybeSingle();
       let accountId = existingAccount?.id ?? null;
       const isNewAccount = !accountId;
+      // A Pluggy manda o conector usado (ex.: "MeuPluggy", o agregador), não
+      // o banco em si — a instituição real vem dos dados da própria conta.
+      const institutionName =
+        pAccount.marketingName || pAccount.name || item.connector?.name || null;
+      const { branchNumber, accountNumber } = splitTransferNumber(
+        pAccount.bankData?.transferNumber,
+        pAccount.number,
+      );
+      const ownerName = pAccount.owner || null;
       if (!accountId) {
         const { data: created, error } = await supabase
           .from("accounts")
           .insert({
             user_id: userId,
             name: pAccount.name || item.connector?.name || "Conta conectada",
-            institution: item.connector?.name ?? null,
+            institution: institutionName,
+            owner_name: ownerName,
+            branch_number: branchNumber,
+            account_number: accountNumber,
             account_type: "checking",
             currency: pAccount.currencyCode || "BRL",
             initial_balance: 0,
@@ -262,10 +295,18 @@ export async function syncConnection(
         accountId = created.id;
       } else {
         // Mesmo motivo do cartão: religa à conexão atual ao reaproveitar
-        // uma conta órfã de uma conexão excluída anteriormente.
+        // uma conta órfã de uma conexão excluída anteriormente, e atualiza
+        // os dados de identificação (podem ter faltado em sincronizações
+        // anteriores a esse campo existir).
         await supabase
           .from("accounts")
-          .update({ bank_connection_id: connection.id })
+          .update({
+            bank_connection_id: connection.id,
+            institution: institutionName,
+            owner_name: ownerName,
+            branch_number: branchNumber,
+            account_number: accountNumber,
+          })
           .eq("id", accountId);
       }
       const txs = await fetchAllTransactions(pAccount.id);
