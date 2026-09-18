@@ -863,6 +863,7 @@ export function FinanceApp() {
                   categories={categories}
                   costCenters={costCenters}
                   categoryPath={categoryPath}
+                  provisions={transactions.filter((t) => t.status === "provisioned")}
                   onImported={load}
                 />
               )}
