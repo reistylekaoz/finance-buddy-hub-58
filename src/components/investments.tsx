@@ -230,9 +230,13 @@ export function Investments() {
       amount_original: amountOriginal,
       amount_profit: amountOriginal !== null ? balance - amountOriginal : null,
     };
+    // Investimentos criados na mão não vêm da Pluggy, mas a coluna é
+    // obrigatória e única — usa um identificador próprio com prefixo.
     const result = editingInvestmentId
       ? await supabase.from("investments").update(payload).eq("id", editingInvestmentId)
-      : await supabase.from("investments").insert(payload);
+      : await supabase
+          .from("investments")
+          .insert({ ...payload, pluggy_investment_id: `manual:${crypto.randomUUID()}` });
     setSavingInvestment(false);
     if (result.error) {
       toast.error(result.error.message);
@@ -266,6 +270,9 @@ export function Investments() {
       quantity: movementForm.quantity ? Number(movementForm.quantity) : null,
       trade_date: movementForm.trade_date,
       description: movementForm.description || null,
+      // Coluna obrigatória e única por investimento — movimentos manuais
+      // ganham um identificador próprio com prefixo.
+      external_id: `manual:${crypto.randomUUID()}`,
     });
     if (error) {
       setSavingMovement(false);
