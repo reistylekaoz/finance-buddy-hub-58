@@ -59,6 +59,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
+import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -160,6 +161,8 @@ const currencyOptions = [
 ];
 const formatCurrency = (value: number, currency: string) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(value);
+const sortCurrencyKeys = (keys: string[]) =>
+  [...keys].sort((a, b) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
 const dateFmt = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "short",
@@ -437,6 +440,82 @@ export function FinanceApp() {
     }
     return rows.sort((a, b) => b.count - a.count);
   }, [costCenters, reportableTransactions]);
+
+  // Árvore de categorias com totais por moeda: cada nó soma seus próprios
+  // lançamentos ("own") e, separadamente, o total acumulado com os filhos
+  // ("total") — é o que permite expandir uma categoria-pai e ver o total dela
+  // se abrir em subcategorias, sem perder o valor lançado direto nela.
+  const categoryReport = useMemo(() => {
+    type Node = {
+      id: string;
+      name: string;
+      category_type: "income" | "expense";
+      parent_id: string | null;
+      own: { income: Record<string, number>; expense: Record<string, number>; count: number };
+      total: { income: Record<string, number>; expense: Record<string, number>; count: number };
+      children: Node[];
+    };
+    const byId = new Map<string, Node>();
+    for (const c of categories) {
+      byId.set(c.id, {
+        id: c.id,
+        name: c.name,
+        category_type: c.category_type,
+        parent_id: c.parent_id,
+        own: { income: {}, expense: {}, count: 0 },
+        total: { income: {}, expense: {}, count: 0 },
+        children: [],
+      });
+    }
+    for (const t of reportableTransactions) {
+      if (t.transaction_type === "transfer" || !t.category_id) continue;
+      const node = byId.get(t.category_id);
+      if (!node) continue;
+      const bucket = t.transaction_type === "income" ? node.own.income : node.own.expense;
+      const currency = currencyOf(t.account_id);
+      bucket[currency] = (bucket[currency] ?? 0) + Number(t.amount);
+      node.own.count += 1;
+    }
+    for (const node of byId.values()) {
+      if (node.parent_id && byId.has(node.parent_id)) {
+        byId.get(node.parent_id)!.children.push(node);
+      }
+    }
+    const computed = new Set<string>();
+    function computeTotal(node: Node) {
+      if (computed.has(node.id)) return;
+      computed.add(node.id);
+      const total = {
+        income: { ...node.own.income },
+        expense: { ...node.own.expense },
+        count: node.own.count,
+      };
+      for (const child of node.children) {
+        computeTotal(child);
+        for (const [cur, val] of Object.entries(child.total.income))
+          total.income[cur] = (total.income[cur] ?? 0) + val;
+        for (const [cur, val] of Object.entries(child.total.expense))
+          total.expense[cur] = (total.expense[cur] ?? 0) + val;
+        total.count += child.total.count;
+      }
+      node.total = total;
+    }
+    for (const node of byId.values()) computeTotal(node);
+    const roots = Array.from(byId.values())
+      .filter((n) => !n.parent_id || !byId.has(n.parent_id))
+      .sort((a, b) => b.total.count - a.total.count);
+
+    const uncategorizedTx = reportableTransactions.filter(
+      (t) => !t.category_id && t.transaction_type !== "transfer",
+    );
+    const uncategorized = {
+      income: sumByCurrency(uncategorizedTx.filter((t) => t.transaction_type === "income")),
+      expense: sumByCurrency(uncategorizedTx.filter((t) => t.transaction_type === "expense")),
+      count: uncategorizedTx.length,
+    };
+
+    return { roots, uncategorized };
+  }, [categories, reportableTransactions]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -875,6 +954,7 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   centerSummary={centerSummary}
+                  categoryReport={categoryReport}
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                 />
@@ -900,6 +980,7 @@ export function FinanceApp() {
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                   onConfirmTx={openConfirmProvision}
+                  onBulkUpdated={load}
                 />
               )}
               {view === "import" && (
@@ -1533,37 +1614,131 @@ function Dashboard({
   categoryPath,
   centerName,
   centerSummary,
+  categoryReport,
   onEditTx,
   onDeleteTx,
-}: any) {
+}: {
+  totals: {
+    byCurrency: { currency: string; income: number; expense: number; result: number }[];
+    balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
+    missingRateCurrencies: string[];
+    balance: number;
+    assetTotal: number;
+    liabilityTotal: number;
+  };
+  rateDate: string;
+  chartDataByCurrency: {
+    currency: string;
+    data: { month: string; receita: number; despesa: number }[];
+  }[];
+  transactions: Transaction[];
+  accounts: Account[];
+  categoryPath: (id: string | null) => string;
+  centerName: (id: string | null) => string;
+  centerSummary: (CostCenter & {
+    income: Record<string, number>;
+    expense: Record<string, number>;
+    currencies: string[];
+    count: number;
+  })[];
+  categoryReport: {
+    roots: CategoryNode[];
+    uncategorized: {
+      income: Record<string, number>;
+      expense: Record<string, number>;
+      count: number;
+    };
+  };
+  onEditTx: (tx: Transaction) => void;
+  onDeleteTx: (tx: Transaction) => void;
+}) {
+  const [currencyFilter, setCurrencyFilter] = useState<string>("all");
+  const availableCurrencies = sortCurrencyKeys(
+    Array.from(
+      new Set<string>([
+        ...totals.balanceByCurrency.map((c) => c.currency),
+        ...totals.byCurrency.map((c) => c.currency),
+      ]),
+    ),
+  );
+  const showCurrency = (c: string) => currencyFilter === "all" || currencyFilter === c;
+  const isAll = currencyFilter === "all";
+
+  const filteredBalanceByCurrency = totals.balanceByCurrency.filter((c) =>
+    showCurrency(c.currency),
+  );
+  const filteredByCurrency = totals.byCurrency.filter((c) => showCurrency(c.currency));
+  const filteredChartData = chartDataByCurrency.filter((cd) => showCurrency(cd.currency));
+  const filteredTransactions = isAll
+    ? transactions
+    : transactions.filter(
+        (tx: Transaction) =>
+          (accounts.find((a: Account) => a.id === tx.account_id)?.currency || "BRL") ===
+          currencyFilter,
+      );
+  const filteredCenterSummary = centerSummary
+    .map((r) => ({ ...r, currencies: r.currencies.filter(showCurrency) }))
+    .filter((r) => r.currencies.length > 0);
+
+  const primaryBalance = isAll
+    ? {
+        label: "Saldo total",
+        value: totals.balance,
+        currency: "BRL",
+        note: totals.missingRateCurrencies.length
+          ? `Cotação indisponível hoje para ${totals.missingRateCurrencies.join(", ")} — saldo dessas contas não incluído`
+          : undefined,
+      }
+    : (() => {
+        const c = totals.balanceByCurrency.find((x) => x.currency === currencyFilter);
+        return {
+          label: `Saldo total (${currencyFilter})`,
+          value: c?.balance ?? 0,
+          currency: currencyFilter,
+          note: undefined,
+        };
+      })();
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end">
+        <select
+          className={cn(selectClass, "h-9 w-auto")}
+          value={currencyFilter}
+          onChange={(e) => setCurrencyFilter(e.target.value)}
+        >
+          <option value="all">Todas as moedas</option>
+          {availableCurrencies.map((c) => (
+            <option key={c} value={c}>
+              Só {c}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
-          label="Saldo total"
-          value={totals.balance}
-          {...(totals.missingRateCurrencies.length
-            ? {
-                note: `Cotação indisponível hoje para ${totals.missingRateCurrencies.join(", ")} — saldo dessas contas não incluído`,
-              }
-            : {})}
+          label={primaryBalance.label}
+          value={primaryBalance.value}
+          currency={primaryBalance.currency}
+          {...(primaryBalance.note ? { note: primaryBalance.note } : {})}
         />
-        {totals.balanceByCurrency
-          .filter((c: any) => c.currency !== "BRL")
-          .map((c: any) => (
-            <Metric
-              key={`balance-${c.currency}`}
-              label={`Saldo em ${c.currency}`}
-              value={c.balance}
-              currency={c.currency}
-              note={
-                c.balanceBRL === null
-                  ? "Cotação indisponível hoje — não incluído no saldo total"
-                  : `${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`
-              }
-            />
-          ))}
-        {totals.byCurrency.map((c: any) => (
+        {isAll &&
+          filteredBalanceByCurrency
+            .filter((c) => c.currency !== "BRL")
+            .map((c) => (
+              <Metric
+                key={`balance-${c.currency}`}
+                label={`Saldo em ${c.currency}`}
+                value={c.balance}
+                currency={c.currency}
+                note={
+                  c.balanceBRL === null
+                    ? "Cotação indisponível hoje — não incluído no saldo total"
+                    : `${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`
+                }
+              />
+            ))}
+        {filteredByCurrency.map((c) => (
           <div key={c.currency} className="contents">
             <Metric
               label={`Receitas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
@@ -1586,7 +1761,7 @@ function Dashboard({
           </div>
         ))}
       </div>
-      {chartDataByCurrency.map((cd: any) => (
+      {filteredChartData.map((cd) => (
         <div key={cd.currency} className="grid gap-4 xl:grid-cols-5">
           <section className="rounded-lg border border-border bg-card p-5 xl:col-span-3">
             <div>
@@ -1615,7 +1790,7 @@ function Dashboard({
             <p className="text-xs text-muted-foreground">Resultado mensal</p>
             <div className="mt-4 h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={cd.data.map((d: any) => ({ ...d, fluxo: d.receita - d.despesa }))}>
+                <AreaChart data={cd.data.map((d) => ({ ...d, fluxo: d.receita - d.despesa }))}>
                   <defs>
                     <linearGradient id={`cash-${cd.currency}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
@@ -1644,7 +1819,7 @@ function Dashboard({
           <h2 className="font-semibold">Movimentações recentes</h2>
         </div>
         <TransactionRows
-          transactions={transactions.slice(0, 6)}
+          transactions={filteredTransactions.slice(0, 6)}
           accounts={accounts}
           categoryPath={categoryPath}
           centerName={centerName}
@@ -1652,14 +1827,24 @@ function Dashboard({
           onDeleteTx={onDeleteTx}
         />
       </section>
-      {centerSummary.length > 0 && (
+      <CategoryBreakdown
+        categoryReport={categoryReport}
+        currencyFilter={currencyFilter}
+        transactions={transactions}
+        accounts={accounts}
+        categoryPath={categoryPath}
+        centerName={centerName}
+        onEditTx={onEditTx}
+        onDeleteTx={onDeleteTx}
+      />
+      {filteredCenterSummary.length > 0 && (
         <section className="rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-4">
             <h2 className="font-semibold">Resultado por centro de custo</h2>
             <p className="text-xs text-muted-foreground">Receitas e despesas alocadas, por moeda</p>
           </div>
           <div className="divide-y divide-border">
-            {centerSummary.map((r: any) => (
+            {filteredCenterSummary.map((r) => (
               <div key={r.id} className="px-5 py-3">
                 <p className="text-sm font-medium">{r.name}</p>
                 <div className="mt-1 space-y-1">
@@ -1698,6 +1883,248 @@ function Dashboard({
         </section>
       )}
     </div>
+  );
+}
+
+type CategoryNode = {
+  id: string;
+  name: string;
+  category_type: "income" | "expense" | null;
+  own: { income: Record<string, number>; expense: Record<string, number>; count: number };
+  total: { income: Record<string, number>; expense: Record<string, number>; count: number };
+  children: CategoryNode[];
+};
+
+function CategoryAmounts({
+  income,
+  expense,
+  currencyFilter,
+}: {
+  income: Record<string, number>;
+  expense: Record<string, number>;
+  currencyFilter: string;
+}) {
+  const currencies = sortCurrencyKeys(
+    Array.from(new Set([...Object.keys(income), ...Object.keys(expense)])).filter(
+      (c) => currencyFilter === "all" || c === currencyFilter,
+    ),
+  );
+  if (!currencies.length)
+    return <span className="text-xs text-muted-foreground">Sem lançamentos</span>;
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3">
+      {currencies.map((c) => (
+        <span key={c} className="whitespace-nowrap font-mono text-xs tabular-nums">
+          {income[c] ? <span className="text-income">+{formatCurrency(income[c], c)}</span> : null}
+          {income[c] && expense[c] ? " · " : ""}
+          {expense[c] ? (
+            <span className="text-expense">−{formatCurrency(expense[c], c)}</span>
+          ) : null}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Linha recursiva do demonstrativo: clicar expande as subcategorias e, se a
+// categoria tiver lançamentos lançados direto nela (não só nos filhos),
+// mostra a lista deles ali mesmo — dá pra ir "descendo" até o lançamento.
+function CategoryRow({
+  node,
+  depth,
+  currencyFilter,
+  transactions,
+  accounts,
+  categoryPath,
+  centerName,
+  onEditTx,
+  onDeleteTx,
+}: {
+  node: CategoryNode;
+  depth: number;
+  currencyFilter: string;
+  transactions: Transaction[];
+  accounts: Account[];
+  categoryPath: (id: string | null) => string;
+  centerName: (id: string | null) => string;
+  onEditTx: (tx: Transaction) => void;
+  onDeleteTx: (tx: Transaction) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = node.children.length > 0 || node.own.count > 0;
+  const ownTransactions = useMemo(() => {
+    if (!node.own.count) return [];
+    return transactions.filter((t) => {
+      if (t.transaction_type === "transfer") return false;
+      const matchesCategory =
+        node.id === "__uncategorized__" ? !t.category_id : t.category_id === node.id;
+      if (!matchesCategory) return false;
+      if (currencyFilter === "all") return true;
+      const currency = accounts.find((a) => a.id === t.account_id)?.currency || "BRL";
+      return currency === currencyFilter;
+    });
+  }, [transactions, accounts, node.id, node.own.count, currencyFilter]);
+  const children = useMemo(
+    () => [...node.children].sort((a, b) => b.total.count - a.total.count),
+    [node.children],
+  );
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={!canExpand}
+        onClick={() => setExpanded((e) => !e)}
+        className="flex w-full items-center justify-between gap-3 py-3 pr-5 text-left transition-colors hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
+        style={{ paddingLeft: `${20 + depth * 20}px` }}
+      >
+        <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+          {canExpand ? (
+            <ChevronRight
+              className={cn(
+                "size-4 flex-none text-muted-foreground transition-transform",
+                expanded && "rotate-90",
+              )}
+            />
+          ) : (
+            <span className="w-4 flex-none" />
+          )}
+          <span className="truncate">{node.name}</span>
+          {node.category_type && (
+            <span
+              className={cn(
+                "flex-none rounded-full px-2 py-0.5 text-xs",
+                node.category_type === "income"
+                  ? "bg-income-soft text-income"
+                  : "bg-expense-soft text-expense",
+              )}
+            >
+              {node.category_type === "income" ? "Receita" : "Despesa"}
+            </span>
+          )}
+        </span>
+        <CategoryAmounts
+          income={node.total.income}
+          expense={node.total.expense}
+          currencyFilter={currencyFilter}
+        />
+      </button>
+      {expanded && (
+        <div className="border-t border-border/60">
+          {children.map((child) => (
+            <CategoryRow
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              currencyFilter={currencyFilter}
+              transactions={transactions}
+              accounts={accounts}
+              categoryPath={categoryPath}
+              centerName={centerName}
+              onEditTx={onEditTx}
+              onDeleteTx={onDeleteTx}
+            />
+          ))}
+          {ownTransactions.length > 0 && (
+            <div style={{ paddingLeft: `${depth * 20}px` }}>
+              <TransactionRows
+                transactions={ownTransactions}
+                accounts={accounts}
+                categoryPath={categoryPath}
+                centerName={centerName}
+                onEditTx={onEditTx}
+                onDeleteTx={onDeleteTx}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategoryBreakdown({
+  categoryReport,
+  currencyFilter,
+  transactions,
+  accounts,
+  categoryPath,
+  centerName,
+  onEditTx,
+  onDeleteTx,
+}: {
+  categoryReport: {
+    roots: CategoryNode[];
+    uncategorized: {
+      income: Record<string, number>;
+      expense: Record<string, number>;
+      count: number;
+    };
+  };
+  currencyFilter: string;
+  transactions: Transaction[];
+  accounts: Account[];
+  categoryPath: (id: string | null) => string;
+  centerName: (id: string | null) => string;
+  onEditTx: (tx: Transaction) => void;
+  onDeleteTx: (tx: Transaction) => void;
+}) {
+  const roots = useMemo(
+    () => [...categoryReport.roots].sort((a, b) => b.total.count - a.total.count),
+    [categoryReport.roots],
+  );
+  const hasAnyData = roots.some((r) => r.total.count > 0) || categoryReport.uncategorized.count > 0;
+  if (!hasAnyData) return null;
+
+  const uncategorizedNode: CategoryNode = {
+    id: "__uncategorized__",
+    name: "Sem categoria",
+    category_type: null,
+    own: categoryReport.uncategorized,
+    total: categoryReport.uncategorized,
+    children: [],
+  };
+
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-5 py-4">
+        <h2 className="font-semibold">Demonstrativo por categoria</h2>
+        <p className="text-xs text-muted-foreground">
+          Clique numa categoria pra ver subcategorias e lançamentos
+        </p>
+      </div>
+      <div className="divide-y divide-border">
+        {roots
+          .filter((r) => r.total.count > 0)
+          .map((root) => (
+            <CategoryRow
+              key={root.id}
+              node={root}
+              depth={0}
+              currencyFilter={currencyFilter}
+              transactions={transactions}
+              accounts={accounts}
+              categoryPath={categoryPath}
+              centerName={centerName}
+              onEditTx={onEditTx}
+              onDeleteTx={onDeleteTx}
+            />
+          ))}
+        {categoryReport.uncategorized.count > 0 && (
+          <CategoryRow
+            node={uncategorizedNode}
+            depth={0}
+            currencyFilter={currencyFilter}
+            transactions={transactions}
+            accounts={accounts}
+            categoryPath={categoryPath}
+            centerName={centerName}
+            onEditTx={onEditTx}
+            onDeleteTx={onDeleteTx}
+          />
+        )}
+      </div>
+    </section>
   );
 }
 function Accounts({
@@ -1765,6 +2192,8 @@ function TransactionRows({
   onEditTx,
   onDeleteTx,
   onConfirmTx,
+  selectedIds,
+  onToggleSelect,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -1773,7 +2202,10 @@ function TransactionRows({
   onEditTx?: (tx: Transaction) => void;
   onDeleteTx?: (tx: Transaction) => void;
   onConfirmTx?: (tx: Transaction) => void;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string, checked: boolean) => void;
 }) {
+  const selectable = !!selectedIds && !!onToggleSelect;
   return (
     <div className="divide-y divide-border">
       {transactions.map((tx) => {
@@ -1786,9 +2218,19 @@ function TransactionRows({
             key={tx.id}
             className={cn(
               "grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto_auto]",
+              selectable && "sm:grid-cols-[auto_110px_1fr_1fr_auto_auto]",
               provisioned && "bg-muted/20",
             )}
           >
+            {selectable && (
+              <input
+                type="checkbox"
+                className="hidden size-4 accent-[var(--primary)] sm:block"
+                checked={selectedIds!.has(tx.id)}
+                onChange={(e) => onToggleSelect!(tx.id, e.target.checked)}
+                aria-label={`Selecionar ${tx.description}`}
+              />
+            )}
             <span className="hidden text-xs text-muted-foreground sm:block">
               {dateFmt.format(new Date(`${tx.transaction_date}T12:00:00`))}
             </span>
@@ -1865,6 +2307,7 @@ function Transactions({
   onEditTx,
   onDeleteTx,
   onConfirmTx,
+  onBulkUpdated,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -1876,11 +2319,14 @@ function Transactions({
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
   onConfirmTx: (tx: Transaction) => void;
+  onBulkUpdated: () => void;
 }) {
   const [accountIds, setAccountIds] = useState<Set<string>>(new Set());
   const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
   const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
   const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const categoryOptions = useMemo(
     () => [
@@ -1940,6 +2386,58 @@ function Transactions({
     setPeriod({ from: "", to: "" });
   }
 
+  function toggleSelect(id: string, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+  function toggleSelectAll(checked: boolean) {
+    setSelectedIds(checked ? new Set(filtered.map((t) => t.id)) : new Set());
+  }
+  async function applyBulkCategory(categoryId: string) {
+    // Transferências não podem ter categoria (restrição do banco) — ficam de
+    // fora mesmo que estejam marcadas, em vez de travar a atualização toda.
+    const ids = filtered
+      .filter((t) => selectedIds.has(t.id) && t.transaction_type !== "transfer")
+      .map((t) => t.id);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from("transactions")
+      .update({ category_id: categoryId || null })
+      .in("id", ids);
+    setBulkBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`Categoria aplicada a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`);
+    setSelectedIds(new Set());
+    onBulkUpdated();
+  }
+  async function applyBulkCostCenter(costCenterId: string) {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from("transactions")
+      .update({ cost_center_id: costCenterId || null })
+      .in("id", ids);
+    setBulkBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(
+      `Centro de custo aplicado a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`,
+    );
+    setSelectedIds(new Set());
+    onBulkUpdated();
+  }
+
   if (!transactions.length)
     return (
       <Empty
@@ -1986,6 +2484,45 @@ function Transactions({
         </p>
       )}
       <section className="rounded-lg border border-border bg-card">
+        <div className="hidden flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground sm:flex">
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--primary)]"
+            checked={filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id))}
+            onChange={(e) => toggleSelectAll(e.target.checked)}
+            aria-label="Selecionar todos"
+          />
+          {selectedIds.size > 0 ? (
+            <>
+              <span>
+                {selectedIds.size} selecionado{selectedIds.size === 1 ? "" : "s"}
+              </span>
+              <CategoryCombobox
+                categories={categories}
+                categoryPath={categoryPath}
+                value=""
+                onValueChange={(id) => void applyBulkCategory(id)}
+                placeholder="Aplicar categoria aos selecionados"
+                disabled={bulkBusy}
+              />
+              <select
+                className={selectClass}
+                defaultValue=""
+                disabled={bulkBusy}
+                onChange={(e) => void applyBulkCostCenter(e.target.value)}
+              >
+                <option value="">Aplicar centro de custo aos selecionados</option>
+                {costCenters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <span>Selecionar todos</span>
+          )}
+        </div>
         <TransactionRows
           transactions={filtered}
           accounts={accounts}
@@ -1994,6 +2531,8 @@ function Transactions({
           onEditTx={onEditTx}
           onDeleteTx={onDeleteTx}
           onConfirmTx={onConfirmTx}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
         />
       </section>
     </div>
