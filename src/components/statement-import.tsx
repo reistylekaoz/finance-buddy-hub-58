@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, Loader2, Upload } from "lucide-react";
+import { Check, ChevronsUpDown, FileUp, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -136,6 +145,92 @@ function Pager({
         </Button>
       </div>
     </div>
+  );
+}
+
+// Combobox com busca (em vez de <select> nativo): categorias sempre em
+// ordem alfabética pelo caminho completo (ex.: "Casa › Reforma"), com um
+// campo de texto que filtra a lista em tempo real.
+function CategoryCombobox({
+  categories,
+  categoryPath,
+  value,
+  onValueChange,
+  placeholder,
+  emptyOptionLabel,
+  filter,
+  disabled,
+}: {
+  categories: Category[];
+  categoryPath: (id: string | null) => string;
+  value: string;
+  onValueChange: (categoryId: string) => void;
+  placeholder: string;
+  emptyOptionLabel?: string;
+  filter?: (category: Category) => boolean;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const options = useMemo(() => {
+    const list = filter ? categories.filter(filter) : categories;
+    return [...list].sort((a, b) => categoryPath(a.id).localeCompare(categoryPath(b.id), "pt-BR"));
+  }, [categories, filter, categoryPath]);
+  const label = value ? categoryPath(value) : placeholder;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className={cn(
+            selectClass,
+            "flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50",
+            !value && "text-muted-foreground",
+          )}
+        >
+          <span className="truncate">{label}</span>
+          <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(320px,90vw)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar categoria…" />
+          <CommandList>
+            <CommandEmpty>Nenhuma categoria encontrada.</CommandEmpty>
+            <CommandGroup>
+              {emptyOptionLabel && (
+                <CommandItem
+                  value={emptyOptionLabel}
+                  onSelect={() => {
+                    onValueChange("");
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("size-4", value ? "opacity-0" : "opacity-100")} />
+                  {emptyOptionLabel}
+                </CommandItem>
+              )}
+              {options.map((category) => (
+                <CommandItem
+                  key={category.id}
+                  value={categoryPath(category.id)}
+                  onSelect={() => {
+                    onValueChange(category.id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn("size-4", value === category.id ? "opacity-100" : "opacity-0")}
+                  />
+                  {categoryPath(category.id)}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -641,19 +736,14 @@ export function StatementImport({
               <span className="text-xs text-muted-foreground">
                 {selectedBankIds.size} selecionado{selectedBankIds.size === 1 ? "" : "s"}
               </span>
-              <select
-                className={selectClass}
-                defaultValue=""
+              <CategoryCombobox
+                categories={categories}
+                categoryPath={categoryPath}
+                value=""
+                onValueChange={(id) => applyAllBank("category_id", id)}
+                placeholder="Aplicar categoria aos selecionados"
                 disabled={!selectedBankIds.size}
-                onChange={(event) => applyAllBank("category_id", event.target.value)}
-              >
-                <option value="">Aplicar categoria aos selecionados</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {categoryPath(category.id)}
-                  </option>
-                ))}
-              </select>
+              />
               <select
                 className={selectClass}
                 defaultValue=""
@@ -772,25 +862,20 @@ export function StatementImport({
                       </p>
                     ) : (
                       <>
-                        <select
-                          className={selectClass}
+                        <CategoryCombobox
+                          categories={categories}
+                          categoryPath={categoryPath}
                           value={edit.category_id}
-                          onChange={(event) =>
+                          onValueChange={(id) =>
                             setBankEdits((current) => ({
                               ...current,
-                              [row.id]: { ...edit, category_id: event.target.value },
+                              [row.id]: { ...edit, category_id: id },
                             }))
                           }
-                        >
-                          <option value="">Sem categoria</option>
-                          {categories
-                            .filter((category) => category.category_type === row.transaction_type)
-                            .map((category) => (
-                              <option key={category.id} value={category.id}>
-                                {categoryPath(category.id)}
-                              </option>
-                            ))}
-                        </select>
+                          placeholder="Sem categoria"
+                          emptyOptionLabel="Sem categoria"
+                          filter={(category) => category.category_type === row.transaction_type}
+                        />
                         <select
                           className={selectClass}
                           value={edit.cost_center_id}
@@ -842,21 +927,15 @@ export function StatementImport({
               <span className="text-xs text-muted-foreground">
                 {selectedCardIds.size} selecionado{selectedCardIds.size === 1 ? "" : "s"}
               </span>
-              <select
-                className={selectClass}
-                defaultValue=""
+              <CategoryCombobox
+                categories={categories}
+                categoryPath={categoryPath}
+                value=""
+                onValueChange={(id) => applyAllCards("category_id", id)}
+                placeholder="Aplicar categoria aos selecionados"
+                filter={(category) => category.category_type === "expense"}
                 disabled={!selectedCardIds.size}
-                onChange={(event) => applyAllCards("category_id", event.target.value)}
-              >
-                <option value="">Aplicar categoria aos selecionados</option>
-                {categories
-                  .filter((category) => category.category_type === "expense")
-                  .map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {categoryPath(category.id)}
-                    </option>
-                  ))}
-              </select>
+              />
               <select
                 className={selectClass}
                 defaultValue=""
@@ -938,25 +1017,20 @@ export function StatementImport({
                     {money.format(row.amount)}
                   </span>
                   <div className="flex flex-col gap-2">
-                    <select
-                      className={selectClass}
+                    <CategoryCombobox
+                      categories={categories}
+                      categoryPath={categoryPath}
                       value={edit.category_id}
-                      onChange={(event) =>
+                      onValueChange={(id) =>
                         setCardEdits((current) => ({
                           ...current,
-                          [row.id]: { ...edit, category_id: event.target.value },
+                          [row.id]: { ...edit, category_id: id },
                         }))
                       }
-                    >
-                      <option value="">Sem categoria</option>
-                      {categories
-                        .filter((category) => category.category_type === "expense")
-                        .map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {categoryPath(category.id)}
-                          </option>
-                        ))}
-                    </select>
+                      placeholder="Sem categoria"
+                      emptyOptionLabel="Sem categoria"
+                      filter={(category) => category.category_type === "expense"}
+                    />
                     <select
                       className={selectClass}
                       value={edit.cost_center_id}
@@ -1066,19 +1140,14 @@ export function StatementImport({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className={selectClass}
-                defaultValue=""
+              <CategoryCombobox
+                categories={categories}
+                categoryPath={categoryPath}
+                value=""
+                onValueChange={(id) => applyAll("category_id", id)}
+                placeholder="Aplicar categoria aos selecionados"
                 disabled={!totals.count}
-                onChange={(event) => applyAll("category_id", event.target.value)}
-              >
-                <option value="">Aplicar categoria aos selecionados</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {categoryPath(category.id)}
-                  </option>
-                ))}
-              </select>
+              />
               <select
                 className={selectClass}
                 defaultValue=""
@@ -1186,23 +1255,17 @@ export function StatementImport({
                       </p>
                     ) : (
                       <>
-                        <select
-                          className={selectClass}
+                        <CategoryCombobox
+                          categories={categories}
+                          categoryPath={categoryPath}
                           value={row.category_id}
-                          onChange={(event) => patch(row.key, { category_id: event.target.value })}
-                        >
-                          <option value="">Sem categoria</option>
-                          {categories
-                            .filter(
-                              (category) =>
-                                category.category_type === (row.amount >= 0 ? "income" : "expense"),
-                            )
-                            .map((category) => (
-                              <option key={category.id} value={category.id}>
-                                {categoryPath(category.id)}
-                              </option>
-                            ))}
-                        </select>
+                          onValueChange={(id) => patch(row.key, { category_id: id })}
+                          placeholder="Sem categoria"
+                          emptyOptionLabel="Sem categoria"
+                          filter={(category) =>
+                            category.category_type === (row.amount >= 0 ? "income" : "expense")
+                          }
+                        />
                         <select
                           className={selectClass}
                           value={row.cost_center_id}
