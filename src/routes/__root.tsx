@@ -92,6 +92,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
+      { name: "theme-color", content: "oklch(0.554 0.181 41.1)" },
+      // "Adicionar à Tela de Início" no iPhone: sem esses metas o Safari
+      // salva um atalho comum (abre com barra de endereço, ícone genérico).
+      // Com eles, abre em tela cheia como app e usa o ícone/nome certos.
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "apple-mobile-web-app-title", content: "Fluxora" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -105,6 +113,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "icon", href: "/favicon.png", type: "image/png" },
+      {
+        rel: "apple-touch-icon",
+        href: "/__l5e/assets-v1/7c848eb0-0279-4bf0-91d6-c4dad3fc247b/fluxora-icon.png",
+      },
+      { rel: "manifest", href: "/manifest.json" },
     ],
   }),
   shellComponent: RootShell,

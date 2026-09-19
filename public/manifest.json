@@ -1,0 +1,18 @@
+{
+  "name": "Fluxora | Gestão financeira pessoal",
+  "short_name": "Fluxora",
+  "description": "Contas, receitas, despesas, centros de custo e patrimônio em um só lugar.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "oklch(0.975 0.012 73.5)",
+  "theme_color": "oklch(0.554 0.181 41.1)",
+  "icons": [
+    {
+      "src": "/__l5e/assets-v1/7c848eb0-0279-4bf0-91d6-c4dad3fc247b/fluxora-icon.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
