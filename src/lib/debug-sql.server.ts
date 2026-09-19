@@ -1,8 +1,31 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
+// Limite de chamadas por minuto — o token é estático e o endpoint fica em
+// /api/public/debug/sql, então isso é a única barreira contra um script
+// varrendo tabela por tabela caso o token vaze.
+const MAX_QUERIES_PER_MINUTE = 20;
+
+async function isRateLimited(): Promise<boolean> {
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const { count } = await supabaseAdmin
+    .from("debug_sql_audit_log")
+    .select("id", { count: "exact", head: true })
+    .gte("requested_at", since);
+  return (count ?? 0) >= MAX_QUERIES_PER_MINUTE;
+}
+
+async function auditLog(query: string, rowCount: number | null, error: string | null) {
+  await supabaseAdmin.from("debug_sql_audit_log").insert({ query, row_count: rowCount, error });
+}
+
 // Endpoint de consulta somente-leitura ao banco, para ferramentas externas de
 // debug (ex.: agentes conectados via GitHub). Protegido por token no header
-// Authorization: Bearer <DEBUG_SQL_TOKEN>.
+// Authorization: Bearer <DEBUG_SQL_TOKEN>. A função debug_readonly_sql roda
+// com um papel de banco próprio (debug_sql_role) sem acesso ao schema auth
+// nem às colunas de credencial (pluggy_client_secret, link_token) — ver
+// migração 20260920050000 — então mesmo um token vazado não expõe segredos
+// nem dados fora do schema public. Toda chamada fica registrada em
+// debug_sql_audit_log para detectar uso indevido.
 export async function handleDebugSql(request: Request): Promise<Response> {
   const json = (body: unknown, status: number) =>
     new Response(JSON.stringify(body), {
@@ -29,11 +52,15 @@ export async function handleDebugSql(request: Request): Promise<Response> {
     return json({ error: "Unauthorized" }, 401);
   }
 
+  if (await isRateLimited()) {
+    return json({ error: "Muitas consultas em pouco tempo — aguarde um minuto." }, 429);
+  }
+
   let query: unknown;
   try {
     ({ query } = (await request.json()) as { query?: unknown });
   } catch {
-    return json({ error: "Corpo inválido: envie {\"query\": \"select ...\"}" }, 400);
+    return json({ error: 'Corpo inválido: envie {"query": "select ..."}' }, 400);
   }
   if (typeof query !== "string" || !query.trim()) {
     return json({ error: 'Informe {"query": "select ..."}' }, 400);
@@ -43,7 +70,11 @@ export async function handleDebugSql(request: Request): Promise<Response> {
   }
 
   const { data, error } = await supabaseAdmin.rpc("debug_readonly_sql", { query });
-  if (error) return json({ error: error.message }, 400);
+  if (error) {
+    await auditLog(query, null, error.message);
+    return json({ error: error.message }, 400);
+  }
   const rows = Array.isArray(data) ? data : [];
+  await auditLog(query, rows.length, null);
   return json({ rowCount: rows.length, rows }, 200);
 }

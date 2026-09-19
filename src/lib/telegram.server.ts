@@ -96,7 +96,6 @@ async function transcribeVoice(fileUrl: string): Promise<string> {
 type TelegramUpdate = {
   message?: {
     chat: { id: number | string };
-    from?: { username?: string };
     text?: string;
     voice?: { file_id: string };
   };
@@ -126,10 +125,6 @@ type Recipient = {
   card_ids: string[];
 };
 
-function stripAt(username: string): string {
-  return username.startsWith("@") ? username.slice(1) : username;
-}
-
 function asStringArray(value: Json): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
@@ -154,32 +149,19 @@ function toRecipient(row: {
 
 const RECIPIENT_COLUMNS = "id, user_id, label, all_accounts, account_ids, card_ids";
 
-async function findOrLinkRecipient(
-  supabase: Db,
-  chatId: string,
-  fromUsername: string | undefined,
-): Promise<Recipient | null> {
+// Telegram @usernames são autoatribuíveis e podem ser registrados por
+// qualquer pessoa — vincular automaticamente por username permitiria a
+// alguém "roubar" o vínculo de um destinatário legítimo só registrando o
+// mesmo @usuario antes dele conversar com o bot. Por isso o único jeito de
+// vincular um chat_id novo é o link de convite (linkByToken, token opaco de
+// 128 bits); aqui só reconhecemos quem já está vinculado.
+async function findRecipientByChat(supabase: Db, chatId: string): Promise<Recipient | null> {
   const { data: byChat } = await supabase
     .from("telegram_recipients")
     .select(RECIPIENT_COLUMNS)
     .eq("telegram_chat_id", chatId)
     .maybeSingle();
-  if (byChat) return toRecipient(byChat);
-
-  if (!fromUsername) return null;
-  const { data: byUsername } = await supabase
-    .from("telegram_recipients")
-    .select(RECIPIENT_COLUMNS)
-    .ilike("telegram_username", stripAt(fromUsername))
-    .is("telegram_chat_id", null)
-    .maybeSingle();
-  if (!byUsername) return null;
-
-  await supabase
-    .from("telegram_recipients")
-    .update({ telegram_chat_id: chatId })
-    .eq("id", byUsername.id);
-  return toRecipient(byUsername);
+  return byChat ? toRecipient(byChat) : null;
 }
 
 // Vínculo pelo link de convite (/start <token>) — não depende de @usuario
@@ -395,7 +377,7 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
     const startToken = /^\/start(?:\s+(\S+))?/.exec(message.text ?? "")?.[1];
     const recipient =
       (startToken ? await linkByToken(supabaseAdmin, chatId, startToken) : null) ??
-      (await findOrLinkRecipient(supabaseAdmin, chatId, message.from?.username));
+      (await findRecipientByChat(supabaseAdmin, chatId));
     if (!recipient) {
       await sendTelegramMessage(
         chatId,
