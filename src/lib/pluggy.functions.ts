@@ -272,7 +272,8 @@ export async function syncConnection(
         await supabase
           .from("credit_cards")
           .update({ bank_connection_id: connection.id })
-          .eq("id", cardId);
+          .eq("id", cardId)
+          .eq("user_id", userId);
       }
       const [txs, closedBillIds] = await Promise.all([
         fetchAllTransactions(credentials, pAccount.id),
