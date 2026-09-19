@@ -22,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
 import { cn } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
@@ -184,7 +185,10 @@ export function CreditCards({
   const [cards, setCards] = useState<CreditCardRow[]>([]);
   const [txs, setTxs] = useState<CardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCardId, setSelectedCardId] = useState<string>("");
+  const [cardIds, setCardIds] = useState<Set<string>>(new Set());
+  const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
+  const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
+  const [period, setPeriod] = useState<Period>({ from: "", to: "" });
 
   const [cardModalOpen, setCardModalOpen] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
@@ -232,9 +236,6 @@ export function CreditCards({
   useEffect(() => {
     void load();
   }, []);
-  useEffect(() => {
-    if (!selectedCardId && cards.length) setSelectedCardId(cards[0]!.id);
-  }, [cards, selectedCardId]);
 
   const usedByCard = useMemo(() => {
     const map = new Map<string, number>();
@@ -295,7 +296,7 @@ export function CreditCards({
   }
 
   function openNewTx(cardId: string) {
-    setTxForm(emptyTxForm(cardId || selectedCardId));
+    setTxForm(emptyTxForm(cardId || cards[0]?.id || ""));
     setTxModalOpen(true);
   }
   function buildInstallmentRows(): {
@@ -430,21 +431,82 @@ export function CreditCards({
     await load();
   }
 
-  const selectedCard = cards.find((c) => c.id === selectedCardId);
-  const invoices = useMemo(() => {
-    if (!selectedCard) return [];
-    const groups = new Map<
-      string,
-      { key: string; label: string; dueDate: string; items: CardTransaction[] }
-    >();
-    for (const tx of txs.filter((t) => t.card_id === selectedCard.id)) {
-      const info = invoiceInfo(tx.purchase_date, selectedCard.closing_day, selectedCard.due_day);
-      const group = groups.get(info.key) ?? { ...info, items: [] };
-      group.items.push(tx);
-      groups.set(info.key, group);
+  const cardOptions = useMemo(
+    () =>
+      [...cards]
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        .map((c) => ({ id: c.id, label: c.name })),
+    [cards],
+  );
+  const categoryOptions = useMemo(
+    () => [
+      { id: "", label: "Sem categoria" },
+      ...[...categories]
+        .filter((c) => c.category_type === "expense")
+        .sort((a, b) => categoryPath(a.id).localeCompare(categoryPath(b.id), "pt-BR"))
+        .map((c) => ({ id: c.id, label: categoryPath(c.id) })),
+    ],
+    [categories, categoryPath],
+  );
+  const costCenterOptions = useMemo(
+    () => [
+      { id: "", label: "Sem centro de custo" },
+      ...[...costCenters]
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        .map((c) => ({ id: c.id, label: c.name })),
+    ],
+    [costCenters],
+  );
+  const hasActiveFilters =
+    cardIds.size > 0 ||
+    categoryIds.size > 0 ||
+    costCenterIds.size > 0 ||
+    !!period.from ||
+    !!period.to;
+  function clearFilters() {
+    setCardIds(new Set());
+    setCategoryIds(new Set());
+    setCostCenterIds(new Set());
+    setPeriod({ from: "", to: "" });
+  }
+
+  // Cada fatura depende do dia de fechamento/vencimento do próprio cartão,
+  // então agrupamos cartão por cartão (com os filtros já aplicados nos
+  // lançamentos) e só depois juntamos tudo numa lista só, ordenada.
+  const groups = useMemo(() => {
+    const visibleCards = cardIds.size ? cards.filter((c) => cardIds.has(c.id)) : cards;
+    const result: {
+      key: string;
+      label: string;
+      dueDate: string;
+      card: CreditCardRow;
+      items: CardTransaction[];
+    }[] = [];
+    for (const card of visibleCards) {
+      const cardTxs = txs.filter((t) => {
+        if (t.card_id !== card.id) return false;
+        if (categoryIds.size && !categoryIds.has(t.category_id ?? "")) return false;
+        if (costCenterIds.size && !costCenterIds.has(t.cost_center_id ?? "")) return false;
+        if (period.from && t.purchase_date < period.from) return false;
+        if (period.to && t.purchase_date > period.to) return false;
+        return true;
+      });
+      const byKey = new Map<
+        string,
+        { key: string; label: string; dueDate: string; items: CardTransaction[] }
+      >();
+      for (const tx of cardTxs) {
+        const info = invoiceInfo(tx.purchase_date, card.closing_day, card.due_day);
+        const group = byKey.get(info.key) ?? { ...info, items: [] };
+        group.items.push(tx);
+        byKey.set(info.key, group);
+      }
+      for (const group of byKey.values()) result.push({ ...group, card });
     }
-    return Array.from(groups.values()).sort((a, b) => (a.key < b.key ? 1 : -1));
-  }, [txs, selectedCard]);
+    return result.sort((a, b) =>
+      a.key === b.key ? a.card.name.localeCompare(b.card.name, "pt-BR") : a.key < b.key ? 1 : -1,
+    );
+  }, [cards, txs, cardIds, categoryIds, costCenterIds, period]);
 
   if (loading) {
     return (
@@ -542,10 +604,7 @@ export function CreditCards({
                     variant="outline"
                     size="sm"
                     className="mt-3 w-full"
-                    onClick={() => {
-                      setSelectedCardId(card.id);
-                      openNewTx(card.id);
-                    }}
+                    onClick={() => openNewTx(card.id)}
                   >
                     <Plus />
                     Nova despesa
@@ -557,44 +616,64 @@ export function CreditCards({
         )}
       </section>
 
-      {selectedCard && (
+      {cards.length > 0 && (
         <section className="rounded-lg border border-border bg-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Lançamentos do cartão</span>
-              <select
-                className={cn(selectClass, "h-9 w-auto")}
-                value={selectedCardId}
-                onChange={(e) => setSelectedCardId(e.target.value)}
-              >
-                {cards.map((card) => (
-                  <option key={card.id} value={card.id}>
-                    {card.name}
-                  </option>
-                ))}
-              </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Lançamentos</span>
+              <MultiSelectFilter
+                label="Cartão"
+                options={cardOptions}
+                selected={cardIds}
+                onChange={setCardIds}
+                searchPlaceholder="Buscar cartão…"
+              />
+              <MultiSelectFilter
+                label="Categoria"
+                options={categoryOptions}
+                selected={categoryIds}
+                onChange={setCategoryIds}
+                searchPlaceholder="Buscar categoria…"
+              />
+              <MultiSelectFilter
+                label="Centro de custo"
+                options={costCenterOptions}
+                selected={costCenterIds}
+                onChange={setCostCenterIds}
+                searchPlaceholder="Buscar centro de custo…"
+              />
+              <PeriodFilter from={period.from} to={period.to} onChange={setPeriod} />
+              {hasActiveFilters && (
+                <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+                  Limpar filtros
+                </Button>
+              )}
             </div>
-            <Button size="sm" onClick={() => openNewTx(selectedCard.id)}>
+            <Button size="sm" onClick={() => openNewTx(cards[0]!.id)}>
               <Plus />
               Nova despesa
             </Button>
           </div>
-          {!invoices.length ? (
+          {!groups.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-              Nenhum lançamento neste cartão ainda.
+              {hasActiveFilters
+                ? "Nenhum lançamento encontrado com esses filtros."
+                : "Nenhum lançamento em cartão ainda."}
             </p>
           ) : (
             <div className="divide-y divide-border">
-              {invoices.map((invoice) => {
-                const total = invoice.items.reduce((sum, t) => sum + t.amount, 0);
-                const allPaid = invoice.items.every((t) => t.paid_at);
+              {groups.map((group) => {
+                const total = group.items.reduce((sum, t) => sum + t.amount, 0);
+                const allPaid = group.items.every((t) => t.paid_at);
                 return (
-                  <div key={invoice.key} className="px-5 py-4">
+                  <div key={`${group.card.id}-${group.key}`} className="px-5 py-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-medium capitalize">Fatura de {invoice.label}</p>
+                        <p className="text-sm font-medium capitalize">
+                          Fatura de {group.label} · {group.card.name}
+                        </p>
                         <p className="text-xs text-muted-foreground">
-                          Vencimento {invoice.dueDate.split("-").reverse().join("/")} ·{" "}
+                          Vencimento {group.dueDate.split("-").reverse().join("/")} ·{" "}
                           {money.format(total)}
                         </p>
                       </div>
@@ -602,7 +681,7 @@ export function CreditCards({
                         <span className="rounded-full bg-income-soft px-3 py-1 text-xs font-medium text-income">
                           Paga
                         </span>
-                      ) : selectedCard.bank_connection_id ? (
+                      ) : group.card.bank_connection_id ? (
                         <span className="text-xs text-muted-foreground">
                           Pagamento conciliado automaticamente pela integração bancária
                         </span>
@@ -611,7 +690,7 @@ export function CreditCards({
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            openPayInvoice(selectedCard.id, invoice.key, invoice.label, total)
+                            openPayInvoice(group.card.id, group.key, group.label, total)
                           }
                         >
                           <Check />
@@ -620,7 +699,7 @@ export function CreditCards({
                       )}
                     </div>
                     <div className="mt-3 space-y-2">
-                      {invoice.items
+                      {group.items
                         .sort((a, b) => (a.purchase_date < b.purchase_date ? 1 : -1))
                         .map((tx) => (
                           <div
