@@ -19,6 +19,27 @@ function getTelegramToken(): string {
   return token;
 }
 
+// O Telegram não assina os webhooks por padrão, mas deixa registrar um
+// secret_token (enviado de volta no header X-Telegram-Bot-Api-Secret-Token
+// em toda chamada) — sem isso, /api/public/telegram/webhook aceita
+// qualquer POST de qualquer origem, bastando adivinhar/saber um chat_id já
+// vinculado pra ler ou "categorizar" lançamentos de outra pessoa. Derivado
+// do próprio TELEGRAM_BOT_TOKEN (hash, não o token em si) pra não precisar
+// de mais uma variável de ambiente — só quem tem o token do bot consegue
+// calcular o mesmo secret_token.
+async function getWebhookSecretToken(): Promise<string> {
+  const { createHash } = await import("node:crypto");
+  return createHash("sha256").update(`telegram-webhook:${getTelegramToken()}`).digest("hex");
+}
+
+export async function isValidWebhookSecret(request: Request): Promise<boolean> {
+  const provided = request.headers.get("x-telegram-bot-api-secret-token");
+  if (!provided) return false;
+  const { createHash, timingSafeEqual } = await import("node:crypto");
+  const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+  return timingSafeEqual(digest(provided), digest(await getWebhookSecretToken()));
+}
+
 async function telegramFetch<T>(method: string, body: Record<string, unknown>): Promise<T> {
   const token = getTelegramToken();
   const response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
@@ -36,7 +57,10 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
 }
 
 export async function setTelegramWebhook(webhookUrl: string): Promise<void> {
-  await telegramFetch("setWebhook", { url: webhookUrl });
+  await telegramFetch("setWebhook", {
+    url: webhookUrl,
+    secret_token: await getWebhookSecretToken(),
+  });
 }
 
 let cachedBotUsername: string | null = null;
@@ -357,10 +381,15 @@ async function handleCategorizationReply(
 }
 
 export async function handleTelegramWebhook(request: Request): Promise<Response> {
-  // Sem autenticação própria: o Telegram não assina os webhooks por padrão e
-  // essa rota só executa ações escopadas ao chat_id que já enviou a mensagem
-  // (nunca em nome de outro destinatário) — o pior caso de abuso é alguém
-  // mandar mensagens soltas pro próprio bot.
+  // Valida o secret_token que o Telegram devolve em todo POST de webhook
+  // (registrado em setTelegramWebhook). Sem essa checagem, qualquer um que
+  // descubra essa URL pública poderia forjar um update com um chat_id já
+  // vinculado a alguém e disparar handleCategorizationReply em nome dessa
+  // pessoa (lê/recategoriza os lançamentos pendentes dela).
+  if (!(await isValidWebhookSecret(request))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   let update: TelegramUpdate;
   try {
