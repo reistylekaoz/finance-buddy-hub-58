@@ -111,8 +111,10 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    const [{ data: profile }, { data: connectionRows }, { data: accountRows }] = await Promise.all([
-      supabase.from("profiles").select("pluggy_client_id, pluggy_client_secret").maybeSingle(),
+    const [{ data: profile }, { data: hasCreds }, { data: connectionRows }, { data: accountRows }] =
+      await Promise.all([
+        supabase.from("profiles").select("pluggy_client_id").maybeSingle(),
+        supabase.rpc("has_pluggy_credentials"),
       supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
       supabase
         .from("accounts")
