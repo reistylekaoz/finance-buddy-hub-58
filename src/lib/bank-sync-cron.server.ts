@@ -1,6 +1,10 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
-import { createSupportTicket, syncConnection } from "@/lib/pluggy.functions";
+import {
+  createSupportTicket,
+  getUserPluggyCredentials,
+  syncConnection,
+} from "@/lib/pluggy.functions";
 import { sendDailyDigests } from "@/lib/telegram.server";
 
 // Disparado diariamente às 01:00 pelo agendador da Lovable Cloud (protegido
@@ -24,7 +28,11 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
   let failed = 0;
   for (const connection of connections ?? []) {
     try {
-      await syncConnection(supabaseAdmin, connection.user_id, connection);
+      // Cada conexão sincroniza com as credenciais Pluggy do próprio dono
+      // dela (supabaseAdmin ignora RLS, então dá pra ler o profile de
+      // qualquer usuário aqui).
+      const credentials = await getUserPluggyCredentials(supabaseAdmin, connection.user_id);
+      await syncConnection(supabaseAdmin, connection.user_id, credentials, connection);
       synced += 1;
     } catch (syncError) {
       failed += 1;

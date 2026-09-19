@@ -7,18 +7,26 @@ type Db = SupabaseClient<Database>;
 
 const PLUGGY_BASE_URL = "https://api.pluggy.ai";
 
-// Temporário ("por hora"): integração bancária automática só liberada pro
-// dono da conta (murilovieiracardoso@gmail.com) até os itens de múltiplos
-// usuários/cobrança do roadmap estarem prontos. Remover essa checagem
-// quando abrir a integração pra todo mundo.
-const OWNER_USER_ID = "496dc932-c9eb-447f-a1c9-0c23c8730cbb";
+export type PluggyCredentials = { clientId: string; clientSecret: string };
 
-function requireOwner(userId: string) {
-  if (userId !== OWNER_USER_ID) {
+// Cada usuário tem seu próprio app na Pluggy (clientId/clientSecret
+// próprios, cadastrados em Configurações) — sem isso não dá pra autenticar
+// nem consultar nada da API dele.
+export async function getUserPluggyCredentials(
+  supabase: Db,
+  userId: string,
+): Promise<PluggyCredentials> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("pluggy_client_id, pluggy_client_secret")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!data?.pluggy_client_id || !data?.pluggy_client_secret) {
     throw new Error(
-      "A integração bancária automática ainda não está disponível pra todos os usuários — em breve!",
+      "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
     );
   }
+  return { clientId: data.pluggy_client_id, clientSecret: data.pluggy_client_secret };
 }
 
 type PluggyAccount = {
@@ -81,31 +89,39 @@ type PluggyItem = {
   connector?: { name: string };
 };
 
-let cachedApiKey: { key: string; expiresAt: number } | null = null;
+// Uma apiKey por clientId (cada usuário tem a sua) — não dá pra usar uma
+// única global como antes, já que cada usuário autentica com credenciais
+// próprias.
+const apiKeyCache = new Map<string, { key: string; expiresAt: number }>();
 
-async function getApiKey(): Promise<string> {
-  if (cachedApiKey && cachedApiKey.expiresAt > Date.now()) return cachedApiKey.key;
-  const clientId = process.env["PLUGGY_CLIENT_ID"];
-  const clientSecret = process.env["PLUGGY_CLIENT_SECRET"];
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      "Integração bancária não configurada: defina PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET nas variáveis de ambiente do Lovable Cloud.",
-    );
-  }
+async function getApiKey(credentials: PluggyCredentials): Promise<string> {
+  const cached = apiKeyCache.get(credentials.clientId);
+  if (cached && cached.expiresAt > Date.now()) return cached.key;
   const response = await fetch(`${PLUGGY_BASE_URL}/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientId, clientSecret }),
+    body: JSON.stringify(credentials),
   });
-  if (!response.ok) throw new Error(`Falha ao autenticar com a Pluggy (${response.status}).`);
+  if (!response.ok) {
+    throw new Error(
+      `Falha ao autenticar com a Pluggy (${response.status}) — confira o Client ID e o Client Secret cadastrados em Configurações.`,
+    );
+  }
   const data = (await response.json()) as { apiKey: string };
   // O apiKey vale 2h; renovamos um pouco antes por margem de segurança.
-  cachedApiKey = { key: data.apiKey, expiresAt: Date.now() + 100 * 60 * 1000 };
+  apiKeyCache.set(credentials.clientId, {
+    key: data.apiKey,
+    expiresAt: Date.now() + 100 * 60 * 1000,
+  });
   return data.apiKey;
 }
 
-async function pluggyFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const apiKey = await getApiKey();
+async function pluggyFetch<T>(
+  credentials: PluggyCredentials,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const apiKey = await getApiKey(credentials);
   const response = await fetch(`${PLUGGY_BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -137,12 +153,16 @@ function dayOfMonth(dateStr: string | undefined): number | null {
 // paginação por cursor, seguindo a mesma lógica do SDK oficial
 // (fetchAllTransactions em pluggy-sdk/dist/client.js): cada página traz
 // `next` com a URL da próxima e o cursor real é o parâmetro `after` dela.
-async function fetchAllTransactions(accountId: string): Promise<PluggyTransaction[]> {
+async function fetchAllTransactions(
+  credentials: PluggyCredentials,
+  accountId: string,
+): Promise<PluggyTransaction[]> {
   const items: PluggyTransaction[] = [];
   let after: string | undefined;
   for (;;) {
     const params = new URLSearchParams({ accountId, ...(after ? { after } : {}) });
     const data = await pluggyFetch<{ results: PluggyTransaction[]; next: string | null }>(
+      credentials,
       `/v2/transactions?${params.toString()}`,
     );
     items.push(...data.results);
@@ -159,13 +179,17 @@ async function fetchAllTransactions(accountId: string): Promise<PluggyTransactio
 // e as futuras interessam. `GET /bills` só lista faturas fechadas; qualquer
 // billId fora desse conjunto é a fatura atual (aberta) ou ainda não existe
 // (lançamento futuro/previsto).
-async function fetchClosedBillIds(accountId: string): Promise<Set<string>> {
+async function fetchClosedBillIds(
+  credentials: PluggyCredentials,
+  accountId: string,
+): Promise<Set<string>> {
   const closed = new Set<string>();
   try {
     let page = 1;
     for (;;) {
       const params = new URLSearchParams({ accountId, page: String(page), pageSize: "500" });
       const data = await pluggyFetch<{ results: PluggyCreditCardBill[]; totalPages: number }>(
+        credentials,
         `/bills?${params.toString()}`,
       );
       for (const bill of data.results) {
@@ -202,10 +226,12 @@ export async function createSupportTicket(
 export async function syncConnection(
   supabase: Db,
   userId: string,
+  credentials: PluggyCredentials,
   connection: { id: string; pluggy_item_id: string },
 ) {
-  const item = await pluggyFetch<PluggyItem>(`/items/${connection.pluggy_item_id}`);
+  const item = await pluggyFetch<PluggyItem>(credentials, `/items/${connection.pluggy_item_id}`);
   const { results: pluggyAccounts } = await pluggyFetch<{ results: PluggyAccount[] }>(
+    credentials,
     `/accounts?itemId=${connection.pluggy_item_id}`,
   );
 
@@ -245,8 +271,8 @@ export async function syncConnection(
           .eq("id", cardId);
       }
       const [txs, closedBillIds] = await Promise.all([
-        fetchAllTransactions(pAccount.id),
-        fetchClosedBillIds(pAccount.id),
+        fetchAllTransactions(credentials, pAccount.id),
+        fetchClosedBillIds(credentials, pAccount.id),
       ]);
       const rows = txs
         .filter((t) => (t.type ?? (t.amount >= 0 ? "DEBIT" : "CREDIT")) === "DEBIT")
@@ -323,7 +349,7 @@ export async function syncConnection(
           })
           .eq("id", accountId);
       }
-      const txs = await fetchAllTransactions(pAccount.id);
+      const txs = await fetchAllTransactions(credentials, pAccount.id);
       const rows = txs.map((t) => {
         // No Open Finance real, amount vem sempre positivo — a direção é o
         // campo type (DEBIT = saiu, CREDIT = entrou), não o sinal do valor.
@@ -383,12 +409,33 @@ export async function syncConnection(
   return { importedCount, itemStatus: item.status };
 }
 
+export const savePluggyCredentials = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { clientId: string; clientSecret: string }) => input)
+  .handler(async ({ context, data }) => {
+    const clientId = data.clientId.trim();
+    const clientSecret = data.clientSecret.trim();
+    if (!clientId || !clientSecret) {
+      throw new Error("Preencha o Client ID e o Client Secret.");
+    }
+    // Confirma que as credenciais realmente autenticam antes de salvar, pra
+    // não deixar o usuário achando que configurou e só descobrir que estava
+    // errado na hora de conectar um banco.
+    await getApiKey({ clientId, clientSecret });
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ pluggy_client_id: clientId, pluggy_client_secret: clientSecret })
+      .eq("id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { oauthRedirectUrl: string }) => input)
   .handler(async ({ context, data }) => {
-    requireOwner(context.userId);
-    const result = await pluggyFetch<{ accessToken: string }>("/connect_token", {
+    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
+    const result = await pluggyFetch<{ accessToken: string }>(credentials, "/connect_token", {
       method: "POST",
       body: JSON.stringify({
         options: {
@@ -409,7 +456,7 @@ export const registerBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { pluggyItemId: string }) => input)
   .handler(async ({ context, data }) => {
-    requireOwner(context.userId);
+    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
     const { data: existing } = await context.supabase
       .from("bank_connections")
       .select("id")
@@ -430,7 +477,7 @@ export const registerBankConnection = createServerFn({ method: "POST" })
       connectionId = created.id;
     }
     try {
-      const result = await syncConnection(context.supabase, context.userId, {
+      const result = await syncConnection(context.supabase, context.userId, credentials, {
         id: connectionId,
         pluggy_item_id: data.pluggyItemId,
       });
@@ -459,7 +506,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
-    requireOwner(context.userId);
+    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
       .select("id, pluggy_item_id, last_synced_at")
@@ -477,7 +524,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
       }
     }
     try {
-      return await syncConnection(context.supabase, context.userId, connection);
+      return await syncConnection(context.supabase, context.userId, credentials, connection);
     } catch (syncError) {
       const message = syncError instanceof Error ? syncError.message : String(syncError);
       await context.supabase
@@ -498,7 +545,6 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
-    requireOwner(context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
       .select("id, pluggy_item_id")
@@ -507,7 +553,7 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
     if (error || !connection) throw new Error("Conexão não encontrada.");
 
     // TODO(produção): antes de ir pra produção, volte a remover o item do
-    // lado da Pluggy também (pluggyFetch(`/items/${connection.pluggy_item_id}`,
+    // lado da Pluggy também (pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`,
     // { method: "DELETE" })). Desligado agora porque, em desenvolvimento,
     // isso obriga reconectar do zero na Pluggy a cada teste — só queremos
     // limpar os dados locais.
