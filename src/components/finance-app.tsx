@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Area,
@@ -346,6 +346,7 @@ export function FinanceApp() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const continueAfterRef = useRef(false);
   const [error, setError] = useState("");
   const [name, setName] = useState("Olá");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -427,6 +428,15 @@ export function FinanceApp() {
   const reportableTransactions = useMemo(
     () => confirmedTransactions.filter((t) => reportableAccountIds.has(t.account_id)),
     [confirmedTransactions, reportableAccountIds],
+  );
+  // provisões (previsões ainda não confirmadas) de contas reportáveis — usadas
+  // só pelo dashboard de previsão (saldo projetado), nunca no saldo/relatórios.
+  const reportableProvisions = useMemo(
+    () =>
+      transactions.filter(
+        (t) => t.status === "provisioned" && reportableAccountIds.has(t.account_id),
+      ),
+    [transactions, reportableAccountIds],
   );
   const balanceByAccount = useMemo(
     () =>
@@ -571,10 +581,12 @@ export function FinanceApp() {
     setForm(emptyForm());
     setAccountActive(true);
     setEditingId(null);
+    continueAfterRef.current = false;
     setModal(type);
   }
   function edit(type: Exclude<Modal, null>, row: any) {
     setError("");
+    continueAfterRef.current = false;
     setEditingId(row.id);
     setAccountActive(type === "account" ? (row.is_active ?? true) : true);
     const base = emptyForm();
@@ -710,8 +722,10 @@ export function FinanceApp() {
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
-    const continueAfter = submitter?.dataset["action"] === "continue";
+    // Detectar o botão clicado via SubmitEvent.submitter é frágil entre
+    // navegadores; o onClick de cada botão (que roda antes do submit) marca
+    // a intenção aqui de forma explícita.
+    const continueAfter = continueAfterRef.current;
     setSaving(true);
     setError("");
     const { data: userData } = await supabase.auth.getUser();
@@ -739,7 +753,11 @@ export function FinanceApp() {
         })),
       );
       if (result.error) setError(result.error.message);
-      else {
+      else if (continueAfter) {
+        toast.success(`${rows.length} provisões criadas. Pronto para o próximo.`);
+        setForm(emptyForm());
+        await load();
+      } else {
         toast.success(`${rows.length} provisões criadas.`);
         setModal(null);
         setEditingId(null);
@@ -963,6 +981,7 @@ export function FinanceApp() {
                   rateDate={rateDate}
                   chartDataByCurrency={chartDataByCurrency}
                   transactions={reportableTransactions}
+                  provisions={reportableProvisions}
                   accounts={accounts}
                   categories={categories}
                   costCenters={costCenters}
@@ -1434,11 +1453,24 @@ export function FinanceApp() {
                 Cancelar
               </Button>
               {!editingId && (
-                <Button type="submit" variant="outline" disabled={saving} data-action="continue">
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={saving}
+                  onClick={() => {
+                    continueAfterRef.current = true;
+                  }}
+                >
                   {saving ? "Salvando…" : "Incluir e continuar"}
                 </Button>
               )}
-              <Button type="submit" disabled={saving}>
+              <Button
+                type="submit"
+                disabled={saving}
+                onClick={() => {
+                  continueAfterRef.current = false;
+                }}
+              >
                 {saving ? "Salvando…" : "Salvar"}
               </Button>
             </div>
@@ -1623,6 +1655,7 @@ function Dashboard({
   rateDate,
   chartDataByCurrency,
   transactions,
+  provisions,
   accounts,
   categories,
   costCenters,
@@ -1645,6 +1678,7 @@ function Dashboard({
     data: { month: string; receita: number; despesa: number }[];
   }[];
   transactions: Transaction[];
+  provisions: Transaction[];
   accounts: Account[];
   categories: Category[];
   costCenters: CostCenter[];
@@ -1767,6 +1801,49 @@ function Dashboard({
   const filteredCenterSummary = periodCenterSummary
     .map((r) => ({ ...r, currencies: r.currencies.filter(showCurrency) }))
     .filter((r) => r.currencies.length > 0);
+
+  // Saldo projetado: saldo atual de cada moeda + soma acumulada das
+  // provisões (previsões ainda não confirmadas) de hoje em diante, um ponto
+  // por data com provisão — dá pra ver pra onde o saldo tende a ir.
+  const projectedBalanceByCurrency = useMemo(() => {
+    const todayIso = isoDate(new Date());
+    const future = provisions
+      .filter((t) => t.transaction_date >= todayIso && t.transaction_type !== "transfer")
+      .map((t) => ({
+        date: t.transaction_date,
+        currency: currencyOf(t.account_id),
+        delta: t.transaction_type === "income" ? Number(t.amount) : -Number(t.amount),
+      }));
+    const currencies = sortCurrencyKeys(
+      Array.from(
+        new Set([
+          ...totals.balanceByCurrency.map((c) => c.currency),
+          ...future.map((f) => f.currency),
+        ]),
+      ),
+    );
+    return currencies
+      .map((currency) => {
+        const startBalance =
+          totals.balanceByCurrency.find((c) => c.currency === currency)?.balance ?? 0;
+        const byDate = new Map<string, number>();
+        for (const ev of future.filter((f) => f.currency === currency)) {
+          byDate.set(ev.date, (byDate.get(ev.date) ?? 0) + ev.delta);
+        }
+        const dates = Array.from(byDate.keys()).sort();
+        let running = startBalance;
+        const points = [{ date: "Hoje", balance: running }];
+        for (const date of dates) {
+          running += byDate.get(date)!;
+          points.push({ date: date.split("-").reverse().join("/"), balance: running });
+        }
+        return { currency, points, hasFuture: dates.length > 0 };
+      })
+      .filter((p) => p.hasFuture);
+  }, [provisions, totals.balanceByCurrency, currencyOf]);
+  const filteredProjectedBalance = projectedBalanceByCurrency.filter((p) =>
+    showCurrency(p.currency),
+  );
 
   const primaryBalance = isAll
     ? {
@@ -1971,6 +2048,57 @@ function Dashboard({
                   ) : (
                     <p className="text-xs text-muted-foreground">Sem lançamentos</p>
                   )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {filteredProjectedBalance.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="font-semibold">Saldo projetado</h2>
+            <p className="text-xs text-muted-foreground">
+              Saldo atual + provisões futuras (lançamentos previstos, ainda não confirmados)
+            </p>
+          </div>
+          <div className="divide-y divide-border">
+            {filteredProjectedBalance.map((p) => (
+              <div key={p.currency} className="p-5">
+                {p.currency !== "BRL" && (
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">{p.currency}</p>
+                )}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={p.points}>
+                      <defs>
+                        <linearGradient id={`projected-${p.currency}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
+                          <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="var(--border)"
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tickLine={false}
+                        axisLine={false}
+                        interval={Math.max(0, Math.ceil(p.points.length / 8) - 1)}
+                      />
+                      <YAxis tickLine={false} axisLine={false} width={70} />
+                      <Tooltip formatter={(v) => formatCurrency(Number(v), p.currency)} />
+                      <Area
+                        type="monotone"
+                        dataKey="balance"
+                        stroke="var(--primary)"
+                        strokeWidth={2}
+                        fill={`url(#projected-${p.currency})`}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             ))}
