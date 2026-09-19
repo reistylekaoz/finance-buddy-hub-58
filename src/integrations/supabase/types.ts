@@ -369,6 +369,33 @@ export type Database = {
           },
         ]
       }
+      debug_sql_audit: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          query: string
+          row_count: number | null
+          succeeded: boolean
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          query: string
+          row_count?: number | null
+          succeeded: boolean
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          query?: string
+          row_count?: number | null
+          succeeded?: boolean
+        }
+        Relationships: []
+      }
       exchange_rates: {
         Row: {
           currency: string
