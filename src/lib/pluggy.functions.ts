@@ -436,10 +436,15 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
     // não deixar o usuário achando que configurou e só descobrir que estava
     // errado na hora de conectar um banco.
     await getApiKey({ clientId, clientSecret });
-    const { error } = await context.supabase
-      .from("profiles")
-      .update({ pluggy_client_id: clientId, pluggy_client_secret: clientSecret })
-      .eq("id", context.userId);
+    // A gravação também passa pelo service role: a tabela de credenciais não
+    // é acessível pelo role do usuário, nem para escrita.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("pluggy_credentials")
+      .upsert(
+        { user_id: context.userId, client_id: clientId, client_secret: clientSecret },
+        { onConflict: "user_id" },
+      );
     if (error) throw new Error(error.message);
     return { ok: true };
   });
