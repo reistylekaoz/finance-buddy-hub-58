@@ -962,20 +962,15 @@ export function CreditCards({
               />
             </Field>
             <Field label="Categoria">
-              <select
-                className={selectClass}
+              <CategoryCombobox
+                categories={categories}
+                categoryPath={categoryPath}
                 value={txForm.category_id}
-                onChange={(e) => setTxForm((f) => ({ ...f, category_id: e.target.value }))}
-              >
-                <option value="">Sem categoria</option>
-                {categories
-                  .filter((c) => c.category_type === "expense")
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {categoryPath(c.id)}
-                    </option>
-                  ))}
-              </select>
+                onValueChange={(id) => setTxForm((f) => ({ ...f, category_id: id }))}
+                placeholder="Sem categoria"
+                emptyOptionLabel="Sem categoria"
+                filter={(c) => c.category_type === "expense"}
+              />
             </Field>
             <Field label="Centro de custo">
               <select
