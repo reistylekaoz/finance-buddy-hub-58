@@ -45,7 +45,6 @@ function isH3SwallowedErrorBody(body: string): boolean {
 }
 
 const CRON_BANK_SYNC_PATH = "/api/public/cron/bank-sync";
-const DEBUG_SQL_PATH = "/api/public/debug/sql";
 const TELEGRAM_WEBHOOK_PATH = "/api/public/telegram/webhook";
 
 export default {
@@ -55,10 +54,6 @@ export default {
       if (pathname === CRON_BANK_SYNC_PATH) {
         const { handleBankSyncCron } = await import("./lib/bank-sync-cron.server");
         return await handleBankSyncCron(request);
-      }
-      if (pathname === DEBUG_SQL_PATH) {
-        const { handleDebugSql } = await import("./lib/debug-sql.server");
-        return await handleDebugSql(request);
       }
       if (pathname === TELEGRAM_WEBHOOK_PATH) {
         const { handleTelegramWebhook } = await import("./lib/telegram.server");
