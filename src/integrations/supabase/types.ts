@@ -395,8 +395,6 @@ export type Database = {
           created_at: string
           display_name: string
           id: string
-          pluggy_client_id: string | null
-          pluggy_client_secret: string | null
           preferred_currency: string
           updated_at: string
         }
@@ -404,8 +402,6 @@ export type Database = {
           created_at?: string
           display_name?: string
           id: string
-          pluggy_client_id?: string | null
-          pluggy_client_secret?: string | null
           preferred_currency?: string
           updated_at?: string
         }
@@ -413,8 +409,6 @@ export type Database = {
           created_at?: string
           display_name?: string
           id?: string
-          pluggy_client_id?: string | null
-          pluggy_client_secret?: string | null
           preferred_currency?: string
           updated_at?: string
         }
