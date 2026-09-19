@@ -417,32 +417,26 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
-          dashboard_filters: Json | null
           display_name: string
           id: string
           pluggy_configured: boolean
           preferred_currency: string
-          transactions_filters: Json | null
           updated_at: string
         }
         Insert: {
           created_at?: string
-          dashboard_filters?: Json | null
           display_name?: string
           id: string
           pluggy_configured?: boolean
           preferred_currency?: string
-          transactions_filters?: Json | null
           updated_at?: string
         }
         Update: {
           created_at?: string
-          dashboard_filters?: Json | null
           display_name?: string
           id?: string
           pluggy_configured?: boolean
           preferred_currency?: string
-          transactions_filters?: Json | null
           updated_at?: string
         }
         Relationships: []
