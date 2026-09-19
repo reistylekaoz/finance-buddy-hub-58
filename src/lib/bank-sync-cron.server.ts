@@ -31,7 +31,7 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
       // Cada conexão sincroniza com as credenciais Pluggy do próprio dono
       // dela (supabaseAdmin ignora RLS, então dá pra ler o profile de
       // qualquer usuário aqui).
-      const credentials = await getUserPluggyCredentials(supabaseAdmin, connection.user_id);
+      const credentials = await getUserPluggyCredentials(connection.user_id);
       await syncConnection(supabaseAdmin, connection.user_id, credentials, connection);
       synced += 1;
     } catch (syncError) {

@@ -111,15 +111,25 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    const [{ data: profile }, { data: connectionRows }, { data: accountRows }] = await Promise.all([
-      supabase.from("profiles").select("pluggy_client_id, pluggy_client_secret").maybeSingle(),
+    // pluggy_client_secret nunca é lido aqui: a Lovable Cloud bloqueia SELECT
+    // dessa coluna pro usuário autenticado (só o backend, com service role,
+    // consegue ler de volta) — o Client ID salvo já é suficiente pra saber
+    // se as credenciais estão configuradas, já que os dois são sempre
+    // salvos juntos.
+    const [
+      { data: profile, error: profileError },
+      { data: connectionRows },
+      { data: accountRows },
+    ] = await Promise.all([
+      supabase.from("profiles").select("pluggy_client_id").maybeSingle(),
       supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
       supabase
         .from("accounts")
         .select("bank_connection_id, institution, owner_name, branch_number, account_number")
         .not("bank_connection_id", "is", null),
     ]);
-    setHasCredentials(!!profile?.pluggy_client_id && !!profile?.pluggy_client_secret);
+    if (profileError) toast.error(`Falha ao carregar suas credenciais: ${profileError.message}`);
+    setHasCredentials(!!profile?.pluggy_client_id);
     setClientId(profile?.pluggy_client_id ?? "");
     setConnections(connectionRows ?? []);
     setAccountByConnection(

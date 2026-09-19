@@ -12,15 +12,22 @@ export type PluggyCredentials = { clientId: string; clientSecret: string };
 // Cada usuário tem seu próprio app na Pluggy (clientId/clientSecret
 // próprios, cadastrados em Configurações) — sem isso não dá pra autenticar
 // nem consultar nada da API dele.
-export async function getUserPluggyCredentials(
-  supabase: Db,
-  userId: string,
-): Promise<PluggyCredentials> {
-  const { data } = await supabase
+//
+// A Lovable Cloud detecta a coluna pluggy_client_secret como um segredo e
+// revoga o SELECT dela pro role "authenticated" automaticamente (o usuário
+// ainda consegue escrever nela, só não ler de volta) — por isso a leitura
+// aqui precisa ser sempre com o client de service role, mesmo quando quem
+// chamou passou um client com RLS do próprio usuário.
+export async function getUserPluggyCredentials(userId: string): Promise<PluggyCredentials> {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { data, error } = await supabaseAdmin
     .from("profiles")
     .select("pluggy_client_id, pluggy_client_secret")
     .eq("id", userId)
     .maybeSingle();
+  if (error) {
+    throw new Error(`Falha ao buscar suas credenciais Pluggy: ${error.message}`);
+  }
   if (!data?.pluggy_client_id || !data?.pluggy_client_secret) {
     throw new Error(
       "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
@@ -434,7 +441,7 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { oauthRedirectUrl: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
+    const credentials = await getUserPluggyCredentials(context.userId);
     const result = await pluggyFetch<{ accessToken: string }>(credentials, "/connect_token", {
       method: "POST",
       body: JSON.stringify({
@@ -456,7 +463,7 @@ export const registerBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { pluggyItemId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
+    const credentials = await getUserPluggyCredentials(context.userId);
     const { data: existing } = await context.supabase
       .from("bank_connections")
       .select("id")
@@ -506,7 +513,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
+    const credentials = await getUserPluggyCredentials(context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
       .select("id, pluggy_item_id, last_synced_at")
