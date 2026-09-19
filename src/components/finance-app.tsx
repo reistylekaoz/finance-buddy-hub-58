@@ -4,16 +4,19 @@ import {
   Area,
   AreaChart,
   Bar,
-  BarChart,
+  ComposedChart,
   CartesianGrid,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import {
+  AlertTriangle,
   ArrowRightLeft,
   Building2,
+  CalendarClock,
   Check,
   CreditCard,
   Download,
@@ -361,7 +364,7 @@ export function FinanceApp() {
     setLoading(true);
     const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
       await Promise.all([
-        supabase.from("profiles").select("display_name").maybeSingle(),
+        supabase.from("profiles").select("display_name, dashboard_filters").maybeSingle(),
         supabase.from("accounts").select("*").order("created_at"),
         supabase.from("categories").select("*").order("name"),
         fetchAllRows<Transaction>((from, to) =>
@@ -381,6 +384,14 @@ export function FinanceApp() {
     setTransactions(transactionsData);
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
+    const savedFilters = profile.data?.dashboard_filters as {
+      currency?: string;
+      period?: Period;
+    } | null;
+    if (savedFilters) {
+      setDashboardCurrencyFilterRaw(savedFilters.currency ?? "all");
+      setDashboardPeriodRaw(savedFilters.period ?? { from: "", to: "" });
+    }
     setLoading(false);
   }
 
@@ -390,6 +401,26 @@ export function FinanceApp() {
 
   const [rates, setRates] = useState<Record<string, number>>({ BRL: 1 });
   const [rateDate, setRateDate] = useState("");
+
+  // Filtro de moeda/período do dashboard: persistido em profiles.dashboard_filters
+  // pra reaparecer sozinho na próxima sessão, em vez de sempre voltar pro
+  // padrão ("Todas as moedas" / "Todo o período").
+  const [dashboardCurrencyFilter, setDashboardCurrencyFilterRaw] = useState<string>("all");
+  const [dashboardPeriod, setDashboardPeriodRaw] = useState<Period>({ from: "", to: "" });
+  async function persistDashboardFilters(next: { currency: string; period: Period }) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return;
+    await supabase.from("profiles").update({ dashboard_filters: next }).eq("id", userId);
+  }
+  function setDashboardCurrencyFilter(value: string) {
+    setDashboardCurrencyFilterRaw(value);
+    void persistDashboardFilters({ currency: value, period: dashboardPeriod });
+  }
+  function setDashboardPeriod(value: Period) {
+    setDashboardPeriodRaw(value);
+    void persistDashboardFilters({ currency: dashboardCurrencyFilter, period: value });
+  }
   useEffect(() => {
     void (async () => {
       try {
@@ -988,8 +1019,13 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   currencyOf={currencyOf}
+                  currencyFilter={dashboardCurrencyFilter}
+                  onCurrencyFilterChange={setDashboardCurrencyFilter}
+                  period={dashboardPeriod}
+                  onPeriodChange={setDashboardPeriod}
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
+                  onConfirmTx={openConfirmProvision}
                 />
               )}
               {view === "accounts" && (
@@ -1662,8 +1698,13 @@ function Dashboard({
   categoryPath,
   centerName,
   currencyOf,
+  currencyFilter,
+  onCurrencyFilterChange,
+  period,
+  onPeriodChange,
   onEditTx,
   onDeleteTx,
+  onConfirmTx,
 }: {
   totals: {
     balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
@@ -1685,12 +1726,14 @@ function Dashboard({
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
   currencyOf: (accountId: string | null) => string;
+  currencyFilter: string;
+  onCurrencyFilterChange: (value: string) => void;
+  period: Period;
+  onPeriodChange: (value: Period) => void;
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
+  onConfirmTx: (tx: Transaction) => void;
 }) {
-  const [currencyFilter, setCurrencyFilter] = useState<string>("all");
-  const [period, setPeriod] = useState<Period>({ from: "", to: "" });
-
   const periodPresets: PeriodPreset[] = [
     {
       label: "Hoje",
@@ -1845,6 +1888,32 @@ function Dashboard({
     showCurrency(p.currency),
   );
 
+  // Painel de previsões: "vencidas" (data já passou e ainda não foi
+  // confirmada — precisa de atenção) e "este mês" (todas as previsões com
+  // data dentro do mês corrente, incluindo as já vencidas que caem nele).
+  const [expandedForecast, setExpandedForecast] = useState<"overdue" | "month" | null>(null);
+  const matchesCurrency = (t: Transaction) =>
+    isAll || (accounts.find((a) => a.id === t.account_id)?.currency || "BRL") === currencyFilter;
+  const forecast = useMemo(() => {
+    const today = new Date();
+    const todayIso = isoDate(today);
+    const monthStartIso = isoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    const monthEndIso = isoDate(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+    const byDateAsc = (a: Transaction, b: Transaction) =>
+      a.transaction_date < b.transaction_date
+        ? -1
+        : a.transaction_date > b.transaction_date
+          ? 1
+          : 0;
+    const overdue = provisions.filter((t) => t.transaction_date < todayIso).sort(byDateAsc);
+    const thisMonth = provisions
+      .filter((t) => t.transaction_date >= monthStartIso && t.transaction_date <= monthEndIso)
+      .sort(byDateAsc);
+    return { overdue, thisMonth };
+  }, [provisions]);
+  const filteredOverdue = forecast.overdue.filter(matchesCurrency);
+  const filteredThisMonth = forecast.thisMonth.filter(matchesCurrency);
+
   const primaryBalance = isAll
     ? {
         label: "Saldo total",
@@ -1870,14 +1939,14 @@ function Dashboard({
         <PeriodFilter
           from={period.from}
           to={period.to}
-          onChange={setPeriod}
+          onChange={onPeriodChange}
           presets={periodPresets}
           placeholder="Todo o período"
         />
         <select
           className={cn(selectClass, "h-9 w-auto")}
           value={currencyFilter}
-          onChange={(e) => setCurrencyFilter(e.target.value)}
+          onChange={(e) => onCurrencyFilterChange(e.target.value)}
         >
           <option value="all">Todas as moedas</option>
           {availableCurrencies.map((c) => (
@@ -1887,105 +1956,205 @@ function Dashboard({
           ))}
         </select>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric
-          label={primaryBalance.label}
-          value={primaryBalance.value}
-          currency={primaryBalance.currency}
-          {...(primaryBalance.note ? { note: primaryBalance.note } : {})}
-        />
-        {isAll &&
-          filteredBalanceByCurrency
-            .filter((c) => c.currency !== "BRL")
-            .map((c) => (
-              <Metric
-                key={`balance-${c.currency}`}
-                label={`Saldo em ${c.currency}`}
-                value={c.balance}
-                currency={c.currency}
-                note={
-                  c.balanceBRL === null
-                    ? "Cotação indisponível hoje — não incluído no saldo total"
-                    : `${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`
-                }
-              />
-            ))}
-        {filteredByCurrency.map((c) => (
-          <div key={c.currency} className="contents">
-            <Metric
-              label={`Receitas${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
-              value={c.income}
-              tone="positive"
-              currency={c.currency}
-            />
-            <Metric
-              label={`Despesas${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
-              value={c.expense}
-              tone="negative"
-              currency={c.currency}
-            />
-            <Metric
-              label={`Resultado${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
-              value={c.result}
-              tone={c.result >= 0 ? "positive" : "negative"}
-              currency={c.currency}
-            />
+
+      {/* Saldo em destaque + receita/despesa/resultado do período num único
+          painel, em vez de um card por número — é o que a maioria dos
+          dashboards financeiros atuais (Mercury, Copilot, Monarch) faz pra
+          não competir visualmente com o saldo, que é o número mais importante. */}
+      <section className="rounded-lg border border-border bg-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
+          <div>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              {primaryBalance.label}
+            </p>
+            <p className="mt-1.5 font-mono text-4xl font-semibold tabular-nums">
+              {formatCurrency(primaryBalance.value, primaryBalance.currency)}
+            </p>
+            {primaryBalance.note && (
+              <p className="mt-2 max-w-sm text-xs text-muted-foreground">{primaryBalance.note}</p>
+            )}
           </div>
-        ))}
-      </div>
-      {filteredChartData.map((cd) => (
-        <div key={cd.currency} className="grid gap-4 xl:grid-cols-5">
-          <section className="rounded-lg border border-border bg-card p-5 xl:col-span-3">
-            <div>
-              <h2 className="font-semibold">
-                Receita × despesa{cd.currency !== "BRL" ? ` — ${cd.currency}` : ""}
-              </h2>
-              <p className="text-xs text-muted-foreground">Últimos seis meses</p>
+          {filteredByCurrency.length > 0 && (
+            <div className="flex flex-wrap gap-x-8 gap-y-3">
+              {filteredByCurrency.map((c) => (
+                <div key={c.currency} className="flex gap-6">
+                  <div>
+                    <p className="text-xs font-medium uppercase text-muted-foreground">
+                      Receita{c.currency !== "BRL" ? ` (${c.currency})` : ""}
+                    </p>
+                    <p className="mt-1 font-mono text-lg font-medium tabular-nums text-income">
+                      {formatCurrency(c.income, c.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase text-muted-foreground">
+                      Despesa{c.currency !== "BRL" ? ` (${c.currency})` : ""}
+                    </p>
+                    <p className="mt-1 font-mono text-lg font-medium tabular-nums text-expense">
+                      {formatCurrency(c.expense, c.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase text-muted-foreground">
+                      Resultado{c.currency !== "BRL" ? ` (${c.currency})` : ""}
+                    </p>
+                    <p
+                      className={cn(
+                        "mt-1 font-mono text-lg font-medium tabular-nums",
+                        c.result >= 0 ? "text-income" : "text-expense",
+                      )}
+                    >
+                      {formatCurrency(c.result, c.currency)}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="mt-4 h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cd.data}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" tickLine={false} axisLine={false} />
-                  <YAxis tickLine={false} axisLine={false} width={55} />
-                  <Tooltip formatter={(v) => formatCurrency(Number(v), cd.currency)} />
-                  <Bar dataKey="receita" fill="var(--income)" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="despesa" fill="var(--expense)" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-          <section className="rounded-lg border border-border bg-card p-5 xl:col-span-2">
-            <h2 className="font-semibold">
-              Fluxo de caixa{cd.currency !== "BRL" ? ` — ${cd.currency}` : ""}
-            </h2>
-            <p className="text-xs text-muted-foreground">Resultado mensal</p>
-            <div className="mt-4 h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={cd.data.map((d) => ({ ...d, fluxo: d.receita - d.despesa }))}>
-                  <defs>
-                    <linearGradient id={`cash-${cd.currency}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
-                      <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" tickLine={false} axisLine={false} />
-                  <YAxis hide />
-                  <Tooltip formatter={(v) => formatCurrency(Number(v), cd.currency)} />
-                  <Area
-                    type="monotone"
-                    dataKey="fluxo"
-                    stroke="var(--primary)"
-                    strokeWidth={2}
-                    fill={`url(#cash-${cd.currency})`}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
+          )}
         </div>
+        {isAll && filteredBalanceByCurrency.some((c) => c.currency !== "BRL") && (
+          <div className="mt-5 flex flex-wrap gap-2 border-t border-border pt-4">
+            {filteredBalanceByCurrency
+              .filter((c) => c.currency !== "BRL")
+              .map((c) => (
+                <span
+                  key={c.currency}
+                  className="rounded-full bg-muted px-3 py-1.5 text-xs text-muted-foreground"
+                  title={
+                    c.balanceBRL === null
+                      ? "Cotação indisponível hoje — não incluído no saldo total"
+                      : `${money.format(c.balanceBRL)} pela cotação${rateDate ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}` : " do dia anterior"}`
+                  }
+                >
+                  Saldo {c.currency}: {formatCurrency(c.balance, c.currency)}
+                  {c.balanceBRL === null && " · cotação indisponível"}
+                </span>
+              ))}
+          </div>
+        )}
+      </section>
+
+      {/* Previsões: o que já venceu (precisa de atenção) e o que ainda vem
+          este mês — clicar expande a lista, e cada lançamento dá pra
+          confirmar ali mesmo ou abrir pra editar. */}
+      {(filteredOverdue.length > 0 || filteredThisMonth.length > 0) && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ForecastCard
+            title="Previsões vencidas"
+            tone="danger"
+            items={filteredOverdue}
+            expanded={expandedForecast === "overdue"}
+            onToggle={() => setExpandedForecast((v) => (v === "overdue" ? null : "overdue"))}
+            accounts={accounts}
+            categoryPath={categoryPath}
+            centerName={centerName}
+            currencyOf={currencyOf}
+            onEditTx={onEditTx}
+            onDeleteTx={onDeleteTx}
+            onConfirmTx={onConfirmTx}
+          />
+          <ForecastCard
+            title="Previsões deste mês"
+            tone="default"
+            items={filteredThisMonth}
+            expanded={expandedForecast === "month"}
+            onToggle={() => setExpandedForecast((v) => (v === "month" ? null : "month"))}
+            accounts={accounts}
+            categoryPath={categoryPath}
+            centerName={centerName}
+            currencyOf={currencyOf}
+            onEditTx={onEditTx}
+            onDeleteTx={onDeleteTx}
+            onConfirmTx={onConfirmTx}
+          />
+        </div>
+      )}
+
+      {filteredChartData.map((cd) => (
+        <section key={cd.currency} className="rounded-lg border border-border bg-card p-5">
+          <div>
+            <h2 className="font-semibold">
+              Receita × despesa{cd.currency !== "BRL" ? ` — ${cd.currency}` : ""}
+            </h2>
+            <p className="text-xs text-muted-foreground">Últimos seis meses</p>
+          </div>
+          <div className="mt-4 h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={cd.data.map((d) => ({ ...d, resultado: d.receita - d.despesa }))}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} width={55} />
+                <Tooltip formatter={(v) => formatCurrency(Number(v), cd.currency)} />
+                <Bar dataKey="receita" name="Receita" fill="var(--income)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="despesa" name="Despesa" fill="var(--expense)" radius={[3, 3, 0, 0]} />
+                <Line
+                  type="monotone"
+                  dataKey="resultado"
+                  name="Resultado"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
       ))}
+
+      {filteredProjectedBalance.length > 0 && (
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div>
+            <h2 className="font-semibold">Saldo projetado</h2>
+            <p className="text-xs text-muted-foreground">
+              Saldo atual + provisões futuras, a partir de hoje
+            </p>
+          </div>
+          <div className="divide-y divide-border">
+            {filteredProjectedBalance.map((p, index) => (
+              <div key={p.currency} className={index === 0 ? "pt-2" : "pt-5"}>
+                {p.currency !== "BRL" && (
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">{p.currency}</p>
+                )}
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={p.points}>
+                      <defs>
+                        <linearGradient id={`projected-${p.currency}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
+                          <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="var(--border)"
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tickLine={false}
+                        axisLine={false}
+                        interval={Math.max(0, Math.ceil(p.points.length / 8) - 1)}
+                      />
+                      <YAxis tickLine={false} axisLine={false} width={70} />
+                      <Tooltip formatter={(v) => formatCurrency(Number(v), p.currency)} />
+                      <Area
+                        type="monotone"
+                        dataKey="balance"
+                        stroke="var(--primary)"
+                        strokeWidth={2}
+                        fill={`url(#projected-${p.currency})`}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-lg border border-border bg-card">
         <div className="border-b border-border px-5 py-4">
           <h2 className="font-semibold">Movimentações recentes</h2>
@@ -1997,6 +2166,7 @@ function Dashboard({
           centerName={centerName}
           onEditTx={onEditTx}
           onDeleteTx={onDeleteTx}
+          onConfirmTx={onConfirmTx}
         />
       </section>
       <CategoryBreakdown
@@ -2054,58 +2224,99 @@ function Dashboard({
           </div>
         </section>
       )}
-      {filteredProjectedBalance.length > 0 && (
-        <section className="rounded-lg border border-border bg-card">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="font-semibold">Saldo projetado</h2>
+    </div>
+  );
+}
+
+function ForecastCard({
+  title,
+  tone,
+  items,
+  expanded,
+  onToggle,
+  accounts,
+  categoryPath,
+  centerName,
+  currencyOf,
+  onEditTx,
+  onDeleteTx,
+  onConfirmTx,
+}: {
+  title: string;
+  tone: "danger" | "default";
+  items: Transaction[];
+  expanded: boolean;
+  onToggle: () => void;
+  accounts: Account[];
+  categoryPath: (id: string | null) => string;
+  centerName: (id: string | null) => string;
+  currencyOf: (accountId: string | null) => string;
+  onEditTx: (tx: Transaction) => void;
+  onDeleteTx: (tx: Transaction) => void;
+  onConfirmTx: (tx: Transaction) => void;
+}) {
+  const sums = sumTransactionsByCurrency(items, currencyOf);
+  const currencies = sortCurrencyKeys(Object.keys(sums));
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-card">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!items.length}
+        className="flex w-full items-center justify-between gap-3 p-4 text-left transition-colors hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              "grid size-10 flex-none place-items-center rounded-full",
+              tone === "danger"
+                ? "bg-destructive-soft text-destructive"
+                : "bg-primary-soft text-primary",
+            )}
+          >
+            {tone === "danger" ? (
+              <AlertTriangle className="size-5" />
+            ) : (
+              <CalendarClock className="size-5" />
+            )}
+          </span>
+          <div>
+            <p className="text-sm font-medium">{title}</p>
             <p className="text-xs text-muted-foreground">
-              Saldo atual + provisões futuras (lançamentos previstos, ainda não confirmados)
+              {items.length ? (
+                <>
+                  {items.length} lançamento{items.length === 1 ? "" : "s"} ·{" "}
+                  {currencies.map((c) => formatCurrency(sums[c] ?? 0, c)).join(" · ")}
+                </>
+              ) : (
+                "Nada por aqui"
+              )}
             </p>
           </div>
-          <div className="divide-y divide-border">
-            {filteredProjectedBalance.map((p) => (
-              <div key={p.currency} className="p-5">
-                {p.currency !== "BRL" && (
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">{p.currency}</p>
-                )}
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={p.points}>
-                      <defs>
-                        <linearGradient id={`projected-${p.currency}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
-                          <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        vertical={false}
-                        stroke="var(--border)"
-                      />
-                      <XAxis
-                        dataKey="date"
-                        tickLine={false}
-                        axisLine={false}
-                        interval={Math.max(0, Math.ceil(p.points.length / 8) - 1)}
-                      />
-                      <YAxis tickLine={false} axisLine={false} width={70} />
-                      <Tooltip formatter={(v) => formatCurrency(Number(v), p.currency)} />
-                      <Area
-                        type="monotone"
-                        dataKey="balance"
-                        stroke="var(--primary)"
-                        strokeWidth={2}
-                        fill={`url(#projected-${p.currency})`}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        </div>
+        {items.length > 0 && (
+          <ChevronRight
+            className={cn(
+              "size-4 flex-none text-muted-foreground transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
+        )}
+      </button>
+      {expanded && items.length > 0 && (
+        <div className="border-t border-border">
+          <TransactionRows
+            transactions={items}
+            accounts={accounts}
+            categoryPath={categoryPath}
+            centerName={centerName}
+            onEditTx={onEditTx}
+            onDeleteTx={onDeleteTx}
+            onConfirmTx={onConfirmTx}
+          />
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
