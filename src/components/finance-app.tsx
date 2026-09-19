@@ -2812,6 +2812,7 @@ function Transactions({
     () =>
       sortByKey(filtered, sortKey, {
         date: (t) => t.transaction_date,
+        settlementDate: (t) => t.transaction_date,
         amount: (t) => Number(t.amount),
         description: (t) => t.description,
       }),
