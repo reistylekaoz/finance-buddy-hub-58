@@ -90,11 +90,16 @@ const statusLabel: Record<string, { label: string; className: string }> = {
   error: { label: "Erro", className: "bg-destructive-soft text-destructive" },
 };
 
+// Mesmo id checado no servidor (pluggy.functions.ts) — mantém em sincronia
+// se algum dia essa checagem virar uma coluna no banco em vez de fixa.
+const OWNER_USER_ID = "496dc932-c9eb-447f-a1c9-0c23c8730cbb";
+
 export function BankConnections({ onSynced }: { onSynced: () => void }) {
   const [connections, setConnections] = useState<BankConnection[]>([]);
   const [accountByConnection, setAccountByConnection] = useState<Map<string, ConnectedAccountInfo>>(
     new Map(),
   );
+  const [isOwner, setIsOwner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -103,13 +108,15 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    const [{ data: connectionRows }, { data: accountRows }] = await Promise.all([
+    const [{ data: auth }, { data: connectionRows }, { data: accountRows }] = await Promise.all([
+      supabase.auth.getUser(),
       supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
       supabase
         .from("accounts")
         .select("bank_connection_id, institution, owner_name, branch_number, account_number")
         .not("bank_connection_id", "is", null),
     ]);
+    setIsOwner(auth.user?.id === OWNER_USER_ID);
     setConnections(connectionRows ?? []);
     setAccountByConnection(
       new Map(
@@ -234,6 +241,16 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     return (
       <div className="grid min-h-[40vh] place-items-center text-sm text-muted-foreground">
         Carregando conexões…
+      </div>
+    );
+  }
+
+  if (!isOwner) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+        <Landmark className="mx-auto mb-3 size-8 text-muted-foreground" />A integração bancária
+        automática ainda não está disponível pra todos os usuários — em breve! Por enquanto, use a
+        importação de extrato (OFX/CSV) em Conciliação e extrato.
       </div>
     );
   }
