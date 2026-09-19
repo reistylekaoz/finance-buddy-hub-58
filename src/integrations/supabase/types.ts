@@ -395,7 +395,7 @@ export type Database = {
           amount: number
           created_at: string
           description: string | null
-          external_id: string | null
+          external_id: string
           id: string
           investment_id: string
           matched_transaction_id: string | null
@@ -408,7 +408,7 @@ export type Database = {
           amount: number
           created_at?: string
           description?: string | null
-          external_id?: string | null
+          external_id: string
           id?: string
           investment_id: string
           matched_transaction_id?: string | null
@@ -421,7 +421,7 @@ export type Database = {
           amount?: number
           created_at?: string
           description?: string | null
-          external_id?: string | null
+          external_id?: string
           id?: string
           investment_id?: string
           matched_transaction_id?: string | null
@@ -460,7 +460,7 @@ export type Database = {
           investment_type: string
           last_synced_at: string | null
           name: string
-          pluggy_investment_id: string | null
+          pluggy_investment_id: string
           updated_at: string
           user_id: string
         }
@@ -476,7 +476,7 @@ export type Database = {
           investment_type: string
           last_synced_at?: string | null
           name: string
-          pluggy_investment_id?: string | null
+          pluggy_investment_id: string
           updated_at?: string
           user_id: string
         }
@@ -492,7 +492,7 @@ export type Database = {
           investment_type?: string
           last_synced_at?: string | null
           name?: string
-          pluggy_investment_id?: string | null
+          pluggy_investment_id?: string
           updated_at?: string
           user_id?: string
         }
