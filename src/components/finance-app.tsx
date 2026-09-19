@@ -2654,14 +2654,14 @@ function TransactionRows({
             key={tx.id}
             className={cn(
               "grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[110px_1fr_1fr_auto_auto]",
-              selectable && "sm:grid-cols-[auto_110px_1fr_1fr_auto_auto]",
+              selectable && "grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_110px_1fr_1fr_auto_auto]",
               provisioned && "bg-muted/20",
             )}
           >
             {selectable && (
               <input
                 type="checkbox"
-                className="hidden size-4 accent-[var(--primary)] sm:block"
+                className="size-4 accent-[var(--primary)]"
                 checked={selectedIds!.has(tx.id)}
                 onChange={(e) => onToggleSelect!(tx.id, e.target.checked)}
                 aria-label={`Selecionar ${tx.description}`}
@@ -2931,7 +2931,7 @@ function Transactions({
         </p>
       )}
       <section className="rounded-lg border border-border bg-card">
-        <div className="hidden flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground sm:flex">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
           <input
             type="checkbox"
             className="size-4 accent-[var(--primary)]"
