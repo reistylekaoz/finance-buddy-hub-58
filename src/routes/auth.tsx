@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 import darkLogo from "@/assets/fluxora-logo-dark-transparent.png.asset.json";
 
@@ -32,6 +33,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -47,13 +49,28 @@ function AuthPage() {
       if (err) setError(err.message);
       else setMessage("Enviamos um link de recuperação para seu e-mail.");
     } else if (mode === "signup") {
+      if (!acceptedTerms) {
+        setError("Você precisa aceitar os Termos de Uso e a Política de Privacidade.");
+        setBusy(false);
+        return;
+      }
       const { data, error: err } = await supabase.auth.signUp({
         email,
         password,
         options: { data: { display_name: displayName }, emailRedirectTo: window.location.origin },
       });
-      if (err) setError(err.message);
-      else if (!data.session) setMessage("Conta criada. Confirme seu e-mail para continuar.");
+      // O Supabase retorna "e-mail já cadastrado" de forma explícita, o que
+      // permite descobrir se um e-mail tem conta só tentando se cadastrar
+      // com ele (enumeração de usuários) — nesse caso específico, resposta
+      // genérica idêntica à de sucesso. Outros erros (senha fraca, e-mail
+      // inválido, limite de tentativas) não vazam essa informação, então
+      // seguem mostrando a mensagem real.
+      const isEnumerationRisk = /already registered|already exists/i.test(err?.message ?? "");
+      if (isEnumerationRisk) {
+        setMessage("Conta criada. Confirme seu e-mail para continuar.");
+      } else if (err) {
+        setError(err.message);
+      } else if (!data.session) setMessage("Conta criada. Confirme seu e-mail para continuar.");
       else navigate({ to: "/dashboard" });
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password });
@@ -156,12 +173,37 @@ function AuthPage() {
                     <Label>Senha</Label>
                     <Input
                       required
-                      minLength={6}
+                      minLength={10}
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Mínimo de 6 caracteres"
+                      placeholder="Mínimo de 10 caracteres"
                     />
+                  </div>
+                )}
+                {mode === "signup" && (
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="accept-terms"
+                      checked={acceptedTerms}
+                      onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor="accept-terms" className="text-xs font-normal leading-snug">
+                      Li e aceito os{" "}
+                      <Link to="/termos" target="_blank" className="text-primary hover:underline">
+                        Termos de Uso
+                      </Link>{" "}
+                      e a{" "}
+                      <Link
+                        to="/privacidade"
+                        target="_blank"
+                        className="text-primary hover:underline"
+                      >
+                        Política de Privacidade
+                      </Link>
+                      .
+                    </Label>
                   </div>
                 )}
                 {error && (
@@ -169,7 +211,11 @@ function AuthPage() {
                     {error}
                   </p>
                 )}
-                <Button className="w-full" type="submit" disabled={busy}>
+                <Button
+                  className="w-full"
+                  type="submit"
+                  disabled={busy || (mode === "signup" && !acceptedTerms)}
+                >
                   {busy
                     ? "Aguarde…"
                     : mode === "login"
