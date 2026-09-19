@@ -2410,7 +2410,7 @@ function RecipientCard({
       await navigator.clipboard.writeText(inviteLink);
       toast.success("Link copiado.");
     } catch {
-      toast.error("Não consegui copiar — copie manualmente: " + inviteLink);
+      toast.error("Não consegui copiar — selecione o link acima e copie manualmente.");
     }
   }
 
