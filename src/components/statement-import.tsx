@@ -543,15 +543,19 @@ export function StatementImport({
       return;
     }
     const toReconcile = chosen.filter((row) => row.reconcile_with);
-    const toInsert = chosen.filter((row) => !row.reconcile_with);
+    const toInsertAll = chosen.filter((row) => !row.reconcile_with);
+    // Sem categoria e centro de custo escolhidos, o lançamento continua na
+    // lista em vez de ser importado pela metade.
+    const toInsert = toInsertAll.filter((row) => row.category_id && row.cost_center_id);
+    const incomplete = toInsertAll.filter((row) => !row.category_id || !row.cost_center_id);
 
     if (toInsert.length) {
       const payload = toInsert.map((row) => ({
         user_id: userId,
         transaction_type: (row.amount >= 0 ? "income" : "expense") as "income" | "expense",
         account_id: accountId,
-        category_id: row.category_id || null,
-        cost_center_id: row.cost_center_id || null,
+        category_id: row.category_id,
+        cost_center_id: row.cost_center_id,
         amount: Math.abs(row.amount),
         transaction_date: row.date,
         description: row.description.slice(0, 180),
@@ -584,15 +588,20 @@ export function StatementImport({
     }
 
     setBusy(false);
-    setRows([]);
-    setFileName("");
+    setRows(incomplete);
+    if (!incomplete.length) setFileName("");
+    const processedCount = toInsert.length + toReconcile.length;
     const parts: string[] = [];
     if (toInsert.length) parts.push(`${toInsert.length} novo${toInsert.length === 1 ? "" : "s"}`);
     if (toReconcile.length)
       parts.push(`${toReconcile.length} conciliado${toReconcile.length === 1 ? "" : "s"}`);
-    setMessage(
-      `${chosen.length} lançamento${chosen.length === 1 ? "" : "s"} processado${chosen.length === 1 ? "" : "s"} (${parts.join(" · ")}).`,
-    );
+    let msg = processedCount
+      ? `${processedCount} lançamento${processedCount === 1 ? "" : "s"} processado${processedCount === 1 ? "" : "s"} (${parts.join(" · ")}).`
+      : "";
+    if (incomplete.length) {
+      msg += `${msg ? " " : ""}${incomplete.length} continua${incomplete.length === 1 ? "" : "m"} pendente${incomplete.length === 1 ? "" : "s"} por falta de categoria e/ou centro de custo.`;
+    }
+    setMessage(msg || "Nenhum lançamento processado.");
     onImported();
   };
 
@@ -614,6 +623,10 @@ export function StatementImport({
   async function savePendingBank() {
     setPendingBusy(true);
     setPendingMessage("");
+    const processedIds = new Set<string>();
+    let reviewed = 0;
+    let reconciled = 0;
+    let incomplete = 0;
     for (const row of pendingBankTransactions) {
       const edit = bankEdits[row.id] ?? emptyEdit;
       if (edit.reconcile_with) {
@@ -642,12 +655,18 @@ export function StatementImport({
           );
           return;
         }
+        processedIds.add(row.id);
+        reconciled += 1;
+      } else if (!edit.category_id || !edit.cost_center_id) {
+        // Sem categoria e centro de custo escolhidos, o lançamento continua
+        // pendente de revisão em vez de ser salvo pela metade.
+        incomplete += 1;
       } else {
         const { error: updateError } = await supabase
           .from("transactions")
           .update({
-            category_id: edit.category_id || null,
-            cost_center_id: edit.cost_center_id || null,
+            category_id: edit.category_id,
+            cost_center_id: edit.cost_center_id,
             reviewed_at: new Date().toISOString(),
           })
           .eq("id", row.id);
@@ -656,27 +675,46 @@ export function StatementImport({
           setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
           return;
         }
+        processedIds.add(row.id);
+        reviewed += 1;
       }
     }
-    setBankEdits({});
-    setSelectedBankIds(new Set());
+    setBankEdits((current) => {
+      const next = { ...current };
+      for (const id of processedIds) delete next[id];
+      return next;
+    });
+    setSelectedBankIds((current) => new Set([...current].filter((id) => !processedIds.has(id))));
     setPendingBusy(false);
-    setPendingMessage(
-      `${pendingBankTransactions.length} lançamento${pendingBankTransactions.length === 1 ? "" : "s"} bancário(s) revisado(s).`,
-    );
+    const parts: string[] = [];
+    if (reviewed) parts.push(`${reviewed} revisado${reviewed === 1 ? "" : "s"}`);
+    if (reconciled) parts.push(`${reconciled} conciliado${reconciled === 1 ? "" : "s"}`);
+    let msg = parts.length ? `${parts.join(" · ")}.` : "";
+    if (incomplete) {
+      msg += `${msg ? " " : ""}${incomplete} continua${incomplete === 1 ? "" : "m"} pendente${incomplete === 1 ? "" : "s"} por falta de categoria e/ou centro de custo.`;
+    }
+    setPendingMessage(msg || "Nenhum lançamento processado.");
     onImported();
   }
 
   async function savePendingCards() {
     setPendingBusy(true);
     setPendingMessage("");
+    const processedIds = new Set<string>();
+    let incomplete = 0;
     for (const row of pendingCardTxs) {
       const edit = cardEdits[row.id] ?? emptyEdit;
+      if (!edit.category_id || !edit.cost_center_id) {
+        // Sem categoria e centro de custo escolhidos, a compra continua
+        // pendente de revisão em vez de ser salva pela metade.
+        incomplete += 1;
+        continue;
+      }
       const { error: updateError } = await supabase
         .from("credit_card_transactions")
         .update({
-          category_id: edit.category_id || null,
-          cost_center_id: edit.cost_center_id || null,
+          category_id: edit.category_id,
+          cost_center_id: edit.cost_center_id,
           reviewed_at: new Date().toISOString(),
         })
         .eq("id", row.id);
@@ -685,13 +723,23 @@ export function StatementImport({
         setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
         return;
       }
+      processedIds.add(row.id);
     }
-    setCardEdits({});
-    setSelectedCardIds(new Set());
+    setCardEdits((current) => {
+      const next = { ...current };
+      for (const id of processedIds) delete next[id];
+      return next;
+    });
+    setSelectedCardIds((current) => new Set([...current].filter((id) => !processedIds.has(id))));
     setPendingBusy(false);
-    setPendingMessage(
-      `${pendingCardTxs.length} compra${pendingCardTxs.length === 1 ? "" : "s"} de cartão revisada(s).`,
-    );
+    const saved = processedIds.size;
+    let msg = saved
+      ? `${saved} compra${saved === 1 ? "" : "s"} de cartão revisada${saved === 1 ? "" : "s"}.`
+      : "";
+    if (incomplete) {
+      msg += `${msg ? " " : ""}${incomplete} continua${incomplete === 1 ? "" : "m"} pendente${incomplete === 1 ? "" : "s"} por falta de categoria e/ou centro de custo.`;
+    }
+    setPendingMessage(msg || "Nenhuma compra processada.");
     await loadPendingCards();
   }
 
@@ -872,8 +920,7 @@ export function StatementImport({
                               [row.id]: { ...edit, category_id: id },
                             }))
                           }
-                          placeholder="Sem categoria"
-                          emptyOptionLabel="Sem categoria"
+                          placeholder="Selecione uma categoria"
                           filter={(category) => category.category_type === row.transaction_type}
                         />
                         <select
@@ -886,7 +933,7 @@ export function StatementImport({
                             }))
                           }
                         >
-                          <option value="">Sem centro de custo</option>
+                          <option value="">Selecione um centro de custos</option>
                           {costCenters.map((center) => (
                             <option key={center.id} value={center.id}>
                               {center.name}
@@ -1027,8 +1074,7 @@ export function StatementImport({
                           [row.id]: { ...edit, category_id: id },
                         }))
                       }
-                      placeholder="Sem categoria"
-                      emptyOptionLabel="Sem categoria"
+                      placeholder="Selecione uma categoria"
                       filter={(category) => category.category_type === "expense"}
                     />
                     <select
@@ -1041,7 +1087,7 @@ export function StatementImport({
                         }))
                       }
                     >
-                      <option value="">Sem centro de custo</option>
+                      <option value="">Selecione um centro de custos</option>
                       {costCenters.map((center) => (
                         <option key={center.id} value={center.id}>
                           {center.name}
@@ -1260,8 +1306,7 @@ export function StatementImport({
                           categoryPath={categoryPath}
                           value={row.category_id}
                           onValueChange={(id) => patch(row.key, { category_id: id })}
-                          placeholder="Sem categoria"
-                          emptyOptionLabel="Sem categoria"
+                          placeholder="Selecione uma categoria"
                           filter={(category) =>
                             category.category_type === (row.amount >= 0 ? "income" : "expense")
                           }
@@ -1273,7 +1318,7 @@ export function StatementImport({
                             patch(row.key, { cost_center_id: event.target.value })
                           }
                         >
-                          <option value="">Sem centro de custo</option>
+                          <option value="">Selecione um centro de custos</option>
                           {costCenters.map((center) => (
                             <option key={center.id} value={center.id}>
                               {center.name}
