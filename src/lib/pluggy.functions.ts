@@ -398,6 +398,7 @@ export async function syncConnection(
             .from("accounts")
             .update({ initial_balance: pAccount.balance - sum })
             .eq("id", accountId)
+            .eq("user_id", userId)
             .eq("pluggy_account_id", pAccount.id);
         }
       }
