@@ -306,6 +306,8 @@ export async function syncConnection(
         .from("accounts")
         .select("id")
         .eq("pluggy_account_id", pAccount.id)
+        // Mesma proteção do cartão: nunca reaproveitar a conta de outro usuário.
+        .eq("user_id", userId)
         .maybeSingle();
       let accountId = existingAccount?.id ?? null;
       const isNewAccount = !accountId;
