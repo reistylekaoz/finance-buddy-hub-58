@@ -70,6 +70,8 @@ import {
   type PeriodPreset,
 } from "@/components/ui/filters";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
+import { Pager } from "@/components/ui/pager";
+import { paginate } from "@/lib/paginate";
 import { sortByKey, type SortKey } from "@/lib/sort";
 import { batchProgress, chunk, BULK_BATCH_SIZE } from "@/lib/batch";
 import { Label } from "@/components/ui/label";
@@ -2835,6 +2837,8 @@ function Transactions({
 }) {
   const { accountIds, categoryIds, costCenterIds, typeIds, period, sortKey } = filters;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(30);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const categoryOptions = useMemo(
@@ -2891,6 +2895,7 @@ function Transactions({
       }),
     [filtered, sortKey],
   );
+  const paged = useMemo(() => paginate(sorted, page, pageSize), [sorted, page, pageSize]);
 
   const hasActiveFilters =
     accountIds.size > 0 ||
@@ -3090,7 +3095,7 @@ function Transactions({
           )}
         </div>
         <TransactionRows
-          transactions={sorted}
+          transactions={paged.slice}
           accounts={accounts}
           categoryPath={categoryPath}
           centerName={centerName}
@@ -3099,6 +3104,17 @@ function Transactions({
           onConfirmTx={onConfirmTx}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
+        />
+        <Pager
+          total={sorted.length}
+          page={paged.page}
+          totalPages={paged.totalPages}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
         />
       </section>
     </div>
