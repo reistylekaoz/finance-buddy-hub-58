@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { encryptSecret, decryptSecret } from "@/lib/pluggy-crypto.server";
 
 type Db = SupabaseClient<Database>;
 
@@ -26,7 +27,10 @@ export async function getUserPluggyCredentials(
       "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
     );
   }
-  return { clientId: data.pluggy_client_id, clientSecret: data.pluggy_client_secret };
+  return {
+    clientId: data.pluggy_client_id,
+    clientSecret: decryptSecret(data.pluggy_client_secret),
+  };
 }
 
 type PluggyAccount = {
@@ -424,7 +428,7 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
     await getApiKey({ clientId, clientSecret });
     const { error } = await context.supabase
       .from("profiles")
-      .update({ pluggy_client_id: clientId, pluggy_client_secret: clientSecret })
+      .update({ pluggy_client_id: clientId, pluggy_client_secret: encryptSecret(clientSecret) })
       .eq("id", context.userId);
     if (error) throw new Error(error.message);
     return { ok: true };
