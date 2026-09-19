@@ -26,8 +26,23 @@ alter default privileges in schema public grant select on tables to debug_sql_ro
 
 -- Nunca legíveis pelo debug SQL, mesmo que a consulta selecione a tabela
 -- inteira: credenciais de terceiros e o token de vínculo do Telegram.
-revoke select (pluggy_client_id, pluggy_client_secret) on public.profiles from debug_sql_role;
-revoke select (link_token) on public.telegram_recipients from debug_sql_role;
+--
+-- IMPORTANTE: "revoke select (coluna) ... from role" NÃO basta quando o
+-- papel também tem select na tabela inteira (como acima, via "all tables
+-- in schema public") — no Postgres, o grant de tabela inteira continua
+-- valendo e "select *" volta a enxergar tudo, ignorando o revoke de
+-- coluna. O jeito que realmente funciona é revogar a tabela inteira e
+-- conceder de volta só as colunas seguras (lista explícita).
+revoke select on public.profiles from debug_sql_role;
+grant select (id, display_name, preferred_currency, created_at, updated_at)
+  on public.profiles to debug_sql_role;
+
+revoke select on public.telegram_recipients from debug_sql_role;
+grant select (
+  id, user_id, label, telegram_username, telegram_chat_id,
+  notify_daily, notify_weekly, notify_monthly,
+  all_accounts, account_ids, card_ids, created_at, updated_at
+) on public.telegram_recipients to debug_sql_role;
 
 alter function public.debug_readonly_sql(text) owner to debug_sql_role;
 
