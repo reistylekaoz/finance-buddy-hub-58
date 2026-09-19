@@ -71,6 +71,7 @@ import {
 } from "@/components/ui/filters";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { sortByKey, type SortKey } from "@/lib/sort";
+import { batchProgress, chunk, BULK_BATCH_SIZE } from "@/lib/batch";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -2929,16 +2930,29 @@ function Transactions({
       .map((t) => t.id);
     if (!ids.length) return;
     setBulkBusy(true);
-    const { error } = await supabase
-      .from("transactions")
-      .update({ category_id: categoryId || null })
-      .in("id", ids);
-    setBulkBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    const progress = batchProgress("Aplicando categoria…", ids.length);
+    let processed = 0;
+    for (const batch of chunk(ids, BULK_BATCH_SIZE)) {
+      const { error } = await supabase
+        .from("transactions")
+        .update({ category_id: categoryId || null })
+        .in("id", batch);
+      if (error) {
+        progress.dismiss();
+        setBulkBusy(false);
+        toast.error(
+          processed
+            ? `${error.message} (${processed}/${ids.length} já aplicados antes do erro)`
+            : error.message,
+        );
+        return;
+      }
+      processed += batch.length;
+      progress.update(processed);
     }
-    toast.success(`Categoria aplicada a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`);
+    progress.dismiss();
+    setBulkBusy(false);
+    toast.success(`Categoria aplicada a ${processed} lançamento${processed === 1 ? "" : "s"}.`);
     setSelectedIds(new Set());
     onBulkUpdated();
   }
@@ -2946,17 +2960,30 @@ function Transactions({
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
     setBulkBusy(true);
-    const { error } = await supabase
-      .from("transactions")
-      .update({ cost_center_id: costCenterId || null })
-      .in("id", ids);
-    setBulkBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    const progress = batchProgress("Aplicando centro de custo…", ids.length);
+    let processed = 0;
+    for (const batch of chunk(ids, BULK_BATCH_SIZE)) {
+      const { error } = await supabase
+        .from("transactions")
+        .update({ cost_center_id: costCenterId || null })
+        .in("id", batch);
+      if (error) {
+        progress.dismiss();
+        setBulkBusy(false);
+        toast.error(
+          processed
+            ? `${error.message} (${processed}/${ids.length} já aplicados antes do erro)`
+            : error.message,
+        );
+        return;
+      }
+      processed += batch.length;
+      progress.update(processed);
     }
+    progress.dismiss();
+    setBulkBusy(false);
     toast.success(
-      `Centro de custo aplicado a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`,
+      `Centro de custo aplicado a ${processed} lançamento${processed === 1 ? "" : "s"}.`,
     );
     setSelectedIds(new Set());
     onBulkUpdated();
