@@ -524,6 +524,9 @@ export async function syncConnection(
           .from("accounts")
           .update({
             bank_connection_id: connection.id,
+            // Também marca a conta adotada (cadastrada à mão antes da
+            // conexão) como sendo essa conta da Pluggy.
+            pluggy_account_id: pAccount.id,
             institution: institutionName,
             owner_name: ownerName,
             branch_number: branchNumber,
