@@ -2993,6 +2993,66 @@ function Transactions({
     setSelectedIds(new Set());
     onBulkUpdated();
   }
+  // Extratos bancários às vezes chegam como duas movimentações separadas (o
+  // débito na conta de origem e o crédito na conta de destino) quando na
+  // verdade são uma única transferência entre contas. Selecionando as duas
+  // (uma despesa, uma receita, contas diferentes, mesmo valor), a despesa
+  // vira a transferência em si e a receita duplicada é removida.
+  async function mergeIntoTransfer() {
+    const selected = transactions.filter((t) => selectedIds.has(t.id));
+    if (selected.length !== 2) return;
+    const [a, b] = selected;
+    const expenseTx =
+      a!.transaction_type === "expense" ? a! : b!.transaction_type === "expense" ? b! : null;
+    const incomeTx =
+      a!.transaction_type === "income" ? a! : b!.transaction_type === "income" ? b! : null;
+    if (!expenseTx || !incomeTx) {
+      toast.error(
+        "Selecione um lançamento de despesa e um de receita para transformar em transferência.",
+      );
+      return;
+    }
+    if (expenseTx.account_id === incomeTx.account_id) {
+      toast.error("Os dois lançamentos precisam estar em contas diferentes.");
+      return;
+    }
+    if (Math.abs(Number(expenseTx.amount) - Number(incomeTx.amount)) > 0.005) {
+      toast.error("Os dois lançamentos precisam ter o mesmo valor para virarem uma transferência.");
+      return;
+    }
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        transaction_type: "transfer",
+        destination_account_id: incomeTx.account_id,
+        category_id: null,
+        cost_center_id: null,
+        status: "confirmed",
+      })
+      .eq("id", expenseTx.id);
+    if (error) {
+      setBulkBusy(false);
+      toast.error(error.message);
+      return;
+    }
+    const { error: deleteError } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", incomeTx.id);
+    setBulkBusy(false);
+    if (deleteError) {
+      toast.error(
+        `A transferência foi criada, mas não consegui remover o lançamento duplicado: ${deleteError.message}`,
+      );
+      setSelectedIds(new Set());
+      onBulkUpdated();
+      return;
+    }
+    toast.success("Lançamentos combinados em uma transferência.");
+    setSelectedIds(new Set());
+    onBulkUpdated();
+  }
 
   if (!transactions.length)
     return (
@@ -3068,6 +3128,17 @@ function Transactions({
               <span>
                 {selectedIds.size} selecionado{selectedIds.size === 1 ? "" : "s"}
               </span>
+              {selectedIds.size === 2 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => void mergeIntoTransfer()}
+                >
+                  Transformar em transferência
+                </Button>
+              )}
               <CategoryCombobox
                 categories={categories}
                 categoryPath={categoryPath}
