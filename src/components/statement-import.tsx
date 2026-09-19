@@ -3,6 +3,7 @@ import { FileUp, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
+import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
 import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -533,6 +534,8 @@ export function StatementImport({
     let reviewed = 0;
     let reconciled = 0;
     let incomplete = 0;
+    let done = 0;
+    const progress = batchProgress("Salvando lançamentos…", pendingBankTransactions.length);
     for (const row of pendingBankTransactions) {
       const edit = bankEdits[row.id] ?? emptyEdit;
       if (edit.reconcile_with) {
@@ -546,6 +549,7 @@ export function StatementImport({
           })
           .eq("id", edit.reconcile_with);
         if (updateError) {
+          progress.dismiss();
           setPendingBusy(false);
           setPendingMessage(`Erro ao conciliar "${row.description}": ${updateError.message}`);
           return;
@@ -555,6 +559,7 @@ export function StatementImport({
           .delete()
           .eq("id", row.id);
         if (deleteError) {
+          progress.dismiss();
           setPendingBusy(false);
           setPendingMessage(
             `Erro ao remover duplicado "${row.description}": ${deleteError.message}`,
@@ -577,6 +582,7 @@ export function StatementImport({
           })
           .eq("id", row.id);
         if (updateError) {
+          progress.dismiss();
           setPendingBusy(false);
           setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
           return;
@@ -584,7 +590,10 @@ export function StatementImport({
         processedIds.add(row.id);
         reviewed += 1;
       }
+      done += 1;
+      if (done % BULK_BATCH_SIZE === 0) progress.update(done);
     }
+    progress.dismiss();
     setBankEdits((current) => {
       const next = { ...current };
       for (const id of processedIds) delete next[id];
@@ -608,29 +617,35 @@ export function StatementImport({
     setPendingMessage("");
     const processedIds = new Set<string>();
     let incomplete = 0;
+    let done = 0;
+    const progress = batchProgress("Salvando compras de cartão…", pendingCardTxs.length);
     for (const row of pendingCardTxs) {
       const edit = cardEdits[row.id] ?? emptyEdit;
       if (!edit.category_id || !edit.cost_center_id) {
         // Sem categoria e centro de custo escolhidos, a compra continua
         // pendente de revisão em vez de ser salva pela metade.
         incomplete += 1;
-        continue;
+      } else {
+        const { error: updateError } = await supabase
+          .from("credit_card_transactions")
+          .update({
+            category_id: edit.category_id,
+            cost_center_id: edit.cost_center_id,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq("id", row.id);
+        if (updateError) {
+          progress.dismiss();
+          setPendingBusy(false);
+          setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
+          return;
+        }
+        processedIds.add(row.id);
       }
-      const { error: updateError } = await supabase
-        .from("credit_card_transactions")
-        .update({
-          category_id: edit.category_id,
-          cost_center_id: edit.cost_center_id,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
-      if (updateError) {
-        setPendingBusy(false);
-        setPendingMessage(`Erro ao salvar "${row.description}": ${updateError.message}`);
-        return;
-      }
-      processedIds.add(row.id);
+      done += 1;
+      if (done % BULK_BATCH_SIZE === 0) progress.update(done);
     }
+    progress.dismiss();
     setCardEdits((current) => {
       const next = { ...current };
       for (const id of processedIds) delete next[id];
