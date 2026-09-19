@@ -58,6 +58,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -891,6 +892,8 @@ export function FinanceApp() {
                 <Transactions
                   transactions={transactions}
                   accounts={accounts}
+                  categories={categories}
+                  costCenters={costCenters}
                   categoryPath={categoryPath}
                   centerName={centerName}
                   onAdd={() => open("transaction")}
@@ -1854,13 +1857,89 @@ function TransactionRows({
 function Transactions({
   transactions,
   accounts,
+  categories,
+  costCenters,
   categoryPath,
   centerName,
   onAdd,
   onEditTx,
   onDeleteTx,
   onConfirmTx,
-}: any) {
+}: {
+  transactions: Transaction[];
+  accounts: Account[];
+  categories: Category[];
+  costCenters: CostCenter[];
+  categoryPath: (id: string | null) => string;
+  centerName: (id: string | null) => string;
+  onAdd: () => void;
+  onEditTx: (tx: Transaction) => void;
+  onDeleteTx: (tx: Transaction) => void;
+  onConfirmTx: (tx: Transaction) => void;
+}) {
+  const [accountIds, setAccountIds] = useState<Set<string>>(new Set());
+  const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
+  const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
+  const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+
+  const categoryOptions = useMemo(
+    () => [
+      { id: "", label: "Sem categoria" },
+      ...[...categories]
+        .sort((a, b) => categoryPath(a.id).localeCompare(categoryPath(b.id), "pt-BR"))
+        .map((c) => ({ id: c.id, label: categoryPath(c.id) })),
+    ],
+    [categories, categoryPath],
+  );
+  const costCenterOptions = useMemo(
+    () => [
+      { id: "", label: "Sem centro de custo" },
+      ...[...costCenters]
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        .map((c) => ({ id: c.id, label: c.name })),
+    ],
+    [costCenters],
+  );
+  const accountOptions = useMemo(
+    () =>
+      [...accounts]
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+        .map((a) => ({ id: a.id, label: a.name })),
+    [accounts],
+  );
+
+  const filtered = useMemo(
+    () =>
+      transactions.filter((tx) => {
+        if (
+          accountIds.size &&
+          !accountIds.has(tx.account_id) &&
+          !(tx.destination_account_id && accountIds.has(tx.destination_account_id))
+        )
+          return false;
+        if (categoryIds.size && !categoryIds.has(tx.category_id ?? "")) return false;
+        if (costCenterIds.size && !costCenterIds.has(tx.cost_center_id ?? "")) return false;
+        if (period.from && tx.transaction_date < period.from) return false;
+        if (period.to && tx.transaction_date > period.to) return false;
+        return true;
+      }),
+    [transactions, accountIds, categoryIds, costCenterIds, period],
+  );
+
+  const hasActiveFilters =
+    accountIds.size > 0 ||
+    categoryIds.size > 0 ||
+    costCenterIds.size > 0 ||
+    !!period.from ||
+    !!period.to;
+
+  function clearFilters() {
+    setAccountIds(new Set());
+    setCategoryIds(new Set());
+    setCostCenterIds(new Set());
+    setPeriod({ from: "", to: "" });
+  }
+
   if (!transactions.length)
     return (
       <Empty
@@ -1869,9 +1948,38 @@ function Transactions({
         onAdd={onAdd}
       />
     );
-  const pendingCount = transactions.filter((t: Transaction) => t.status === "provisioned").length;
+  const pendingCount = filtered.filter((t) => t.status === "provisioned").length;
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <MultiSelectFilter
+          label="Categoria"
+          options={categoryOptions}
+          selected={categoryIds}
+          onChange={setCategoryIds}
+          searchPlaceholder="Buscar categoria…"
+        />
+        <MultiSelectFilter
+          label="Centro de custo"
+          options={costCenterOptions}
+          selected={costCenterIds}
+          onChange={setCostCenterIds}
+          searchPlaceholder="Buscar centro de custo…"
+        />
+        <MultiSelectFilter
+          label="Conta"
+          options={accountOptions}
+          selected={accountIds}
+          onChange={setAccountIds}
+          searchPlaceholder="Buscar conta…"
+        />
+        <PeriodFilter from={period.from} to={period.to} onChange={setPeriod} />
+        {hasActiveFilters && (
+          <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+            Limpar filtros
+          </Button>
+        )}
+      </div>
       {pendingCount > 0 && (
         <p className="text-sm text-muted-foreground">
           {pendingCount} provisão{pendingCount === 1 ? "" : "ões"} aguardando confirmação.
@@ -1879,7 +1987,7 @@ function Transactions({
       )}
       <section className="rounded-lg border border-border bg-card">
         <TransactionRows
-          transactions={transactions}
+          transactions={filtered}
           accounts={accounts}
           categoryPath={categoryPath}
           centerName={centerName}
