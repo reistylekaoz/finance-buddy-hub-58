@@ -381,11 +381,33 @@ export async function syncConnection(
         };
       });
       if (rows.length) {
-        const { error } = await supabase
-          .from("transactions")
-          .upsert(rows, { onConflict: "user_id,external_id" });
-        if (error) throw new Error(error.message);
-        importedCount += rows.length;
+        // Se o usuário já reclassificou um lançamento importado como
+        // transferência, ele tem conta de destino preenchida. Sobrescrever só
+        // o tipo (income/expense) deixaria a linha inconsistente e o banco
+        // recusa (transactions_check), então preservamos essas linhas.
+        const transferIds = new Set<string>();
+        for (let i = 0; i < rows.length; i += 500) {
+          const slice = rows.slice(i, i + 500).map((r) => r.external_id);
+          const { data: existing } = await supabase
+            .from("transactions")
+            .select("external_id")
+            .eq("user_id", userId)
+            .eq("transaction_type", "transfer")
+            .in("external_id", slice);
+          for (const row of existing ?? []) {
+            if (row.external_id) transferIds.add(row.external_id);
+          }
+        }
+        const upsertRows = rows
+          .filter((r) => !transferIds.has(r.external_id))
+          .map((r) => ({ ...r, destination_account_id: null }));
+        if (upsertRows.length) {
+          const { error } = await supabase
+            .from("transactions")
+            .upsert(upsertRows, { onConflict: "user_id,external_id" });
+          if (error) throw new Error(error.message);
+        }
+        importedCount += upsertRows.length;
 
         // O histórico disponível na Pluggy não cobre a vida toda da conta;
         // ajustamos o saldo inicial para o saldo calculado bater com o saldo
