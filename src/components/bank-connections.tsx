@@ -111,32 +111,22 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    // pluggy_client_secret nunca é lido aqui: a Lovable Cloud bloqueia SELECT
-    // dessa coluna pro usuário autenticado (só o backend, com service role,
-    // consegue ler de volta). Por isso "configurado ou não" vem da RPC
-    // has_pluggy_credentials (SECURITY DEFINER), não de checar as colunas
-    // direto pelo client do browser.
-    const [
-      { data: profile, error: profileError },
-      { data: hasCreds, error: hasCredsError },
-      { data: connectionRows },
-      { data: accountRows },
-    ] = await Promise.all([
-      supabase.from("profiles").select("pluggy_client_id").maybeSingle(),
-      supabase.rpc("has_pluggy_credentials"),
-      supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
-      supabase
-        .from("accounts")
-        .select("bank_connection_id, institution, owner_name, branch_number, account_number")
-        .not("bank_connection_id", "is", null),
-    ]);
-    if (profileError || hasCredsError) {
-      toast.error(
-        `Falha ao carregar suas credenciais: ${(profileError ?? hasCredsError)?.message}`,
-      );
+    // As credenciais Pluggy (client id e secret) ficam numa tabela isolada que
+    // o navegador não consegue ler — só o backend, com service role. Aqui o
+    // perfil traz apenas o indicador booleano "configurado ou não".
+    const [{ data: profile, error: profileError }, { data: connectionRows }, { data: accountRows }] =
+      await Promise.all([
+        supabase.from("profiles").select("pluggy_configured").maybeSingle(),
+        supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
+        supabase
+          .from("accounts")
+          .select("bank_connection_id, institution, owner_name, branch_number, account_number")
+          .not("bank_connection_id", "is", null),
+      ]);
+    if (profileError) {
+      toast.error(`Falha ao carregar suas credenciais: ${profileError.message}`);
     }
-    setHasCredentials(hasCreds === true);
-    setClientId(profile?.pluggy_client_id ?? "");
+    setHasCredentials(profile?.pluggy_configured === true);
     setConnections(connectionRows ?? []);
     setAccountByConnection(
       new Map(

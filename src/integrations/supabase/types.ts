@@ -417,13 +417,36 @@ export type Database = {
         }
         Relationships: []
       }
+      pluggy_credentials: {
+        Row: {
+          client_id: string
+          client_secret: string
+          created_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          client_secret: string
+          created_at?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          client_secret?: string
+          created_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
           display_name: string
           id: string
-          pluggy_client_id: string | null
-          pluggy_client_secret: string | null
+          pluggy_configured: boolean
           preferred_currency: string
           updated_at: string
         }
@@ -431,8 +454,7 @@ export type Database = {
           created_at?: string
           display_name?: string
           id: string
-          pluggy_client_id?: string | null
-          pluggy_client_secret?: string | null
+          pluggy_configured?: boolean
           preferred_currency?: string
           updated_at?: string
         }
@@ -440,8 +462,7 @@ export type Database = {
           created_at?: string
           display_name?: string
           id?: string
-          pluggy_client_id?: string | null
-          pluggy_client_secret?: string | null
+          pluggy_configured?: boolean
           preferred_currency?: string
           updated_at?: string
         }
@@ -677,8 +698,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      debug_audit_finish: {
+        Args: {
+          _error: string
+          _id: string
+          _row_count: number
+          _succeeded: boolean
+        }
+        Returns: undefined
+      }
+      debug_audit_start: { Args: { _query: string }; Returns: string }
       debug_readonly_sql: { Args: { query: string }; Returns: Json }
-      has_pluggy_credentials: { Args: never; Returns: boolean }
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
