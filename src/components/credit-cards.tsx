@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
+import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { cn } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
@@ -189,6 +190,8 @@ export function CreditCards({
   const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
   const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
   const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+  const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [cardModalOpen, setCardModalOpen] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
@@ -508,6 +511,56 @@ export function CreditCards({
     );
   }, [cards, txs, cardIds, categoryIds, costCenterIds, period]);
 
+  const visibleTxIds = useMemo(() => groups.flatMap((g) => g.items.map((t) => t.id)), [groups]);
+
+  function toggleSelectTx(id: string, checked: boolean) {
+    setSelectedTxIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+  function toggleSelectAllTx(checked: boolean) {
+    setSelectedTxIds(checked ? new Set(visibleTxIds) : new Set());
+  }
+  async function applyBulkCategory(categoryId: string) {
+    const ids = Array.from(selectedTxIds);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from("credit_card_transactions")
+      .update({ category_id: categoryId || null })
+      .in("id", ids);
+    setBulkBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`Categoria aplicada a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`);
+    setSelectedTxIds(new Set());
+    await load();
+  }
+  async function applyBulkCostCenter(costCenterId: string) {
+    const ids = Array.from(selectedTxIds);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from("credit_card_transactions")
+      .update({ cost_center_id: costCenterId || null })
+      .in("id", ids);
+    setBulkBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(
+      `Centro de custo aplicado a ${ids.length} lançamento${ids.length === 1 ? "" : "s"}.`,
+    );
+    setSelectedTxIds(new Set());
+    await load();
+  }
+
   if (loading) {
     return (
       <div className="grid min-h-[40vh] place-items-center text-sm text-muted-foreground">
@@ -654,6 +707,50 @@ export function CreditCards({
               Nova despesa
             </Button>
           </div>
+          {groups.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--primary)]"
+                checked={
+                  visibleTxIds.length > 0 && visibleTxIds.every((id) => selectedTxIds.has(id))
+                }
+                onChange={(e) => toggleSelectAllTx(e.target.checked)}
+                aria-label="Selecionar todos"
+              />
+              {selectedTxIds.size > 0 ? (
+                <>
+                  <span>
+                    {selectedTxIds.size} selecionado{selectedTxIds.size === 1 ? "" : "s"}
+                  </span>
+                  <CategoryCombobox
+                    categories={categories}
+                    categoryPath={categoryPath}
+                    value=""
+                    onValueChange={(id) => void applyBulkCategory(id)}
+                    placeholder="Aplicar categoria aos selecionados"
+                    filter={(c) => c.category_type === "expense"}
+                    disabled={bulkBusy}
+                  />
+                  <select
+                    className={selectClass}
+                    defaultValue=""
+                    disabled={bulkBusy}
+                    onChange={(e) => void applyBulkCostCenter(e.target.value)}
+                  >
+                    <option value="">Aplicar centro de custo aos selecionados</option>
+                    {costCenters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <span>Selecionar todos</span>
+              )}
+            </div>
+          )}
           {!groups.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
               {hasActiveFilters
@@ -706,6 +803,13 @@ export function CreditCards({
                             key={tx.id}
                             className="flex items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
                           >
+                            <input
+                              type="checkbox"
+                              className="size-4 flex-none accent-[var(--primary)]"
+                              checked={selectedTxIds.has(tx.id)}
+                              onChange={(e) => toggleSelectTx(tx.id, e.target.checked)}
+                              aria-label={`Selecionar ${tx.description}`}
+                            />
                             <div className="min-w-0 flex-1">
                               <p className="truncate">{tx.description}</p>
                               <p className="text-xs text-muted-foreground">

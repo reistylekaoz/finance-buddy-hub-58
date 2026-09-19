@@ -5,7 +5,7 @@ export type RateResult = { date: string; rates: Record<string, number> };
 const PAIRS = ["EUR-BRL", "USD-BRL"] as const;
 const STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 
-async function fetchLiveRate(pair: string): Promise<{ bid: number; date: string } | null> {
+async function fetchFromAwesomeApi(pair: string): Promise<{ bid: number; date: string } | null> {
   try {
     const response = await fetch(`https://economia.awesomeapi.com.br/json/daily/${pair}/2`);
     if (!response.ok) return null;
@@ -22,6 +22,28 @@ async function fetchLiveRate(pair: string): Promise<{ bid: number; date: string 
   } catch {
     return null;
   }
+}
+
+// A AwesomeAPI tem cota gratuita curta e devolve 429 (QuotaExceeded) com
+// frequência; o Frankfurter (câmbio de referência do BCE) não exige chave e
+// não tem cota, então serve de segunda tentativa pra não deixar a conversão
+// sumir do dashboard quando a primeira fonte estiver fora do ar.
+async function fetchFromFrankfurter(base: string): Promise<{ bid: number; date: string } | null> {
+  try {
+    const response = await fetch(`https://api.frankfurter.dev/v1/latest?from=${base}&to=BRL`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as { date?: string; rates?: { BRL?: number } };
+    const bid = Number(data.rates?.BRL);
+    if (!Number.isFinite(bid) || bid <= 0) return null;
+    return { bid, date: data.date ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLiveRate(pair: string): Promise<{ bid: number; date: string } | null> {
+  const base = pair.slice(0, 3);
+  return (await fetchFromAwesomeApi(pair)) ?? (await fetchFromFrankfurter(base));
 }
 
 // Cotações de fechamento do dia anterior (D-1), em reais por unidade da

@@ -12,7 +12,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-const triggerClass =
+export const triggerClass =
   "flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring";
 
 export type FilterOption = { id: string; label: string };
