@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarRange, Check, ChevronsUpDown } from "lucide-react";
+import { ArrowDownUp, CalendarRange, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { SORT_OPTIONS, type SortKey } from "@/lib/sort";
 
 export const triggerClass =
   "flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring";
@@ -208,5 +209,30 @@ export function PeriodFilter({
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+export function SortSelect({
+  value,
+  onChange,
+}: {
+  value: SortKey;
+  onChange: (next: SortKey) => void;
+}) {
+  return (
+    <label className={cn(triggerClass, "gap-1.5")}>
+      <ArrowDownUp className="size-3.5 shrink-0 opacity-50" />
+      <select
+        className="w-auto cursor-pointer bg-transparent outline-none"
+        value={value}
+        onChange={(e) => onChange(e.target.value as SortKey)}
+      >
+        {SORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
