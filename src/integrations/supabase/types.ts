@@ -390,6 +390,122 @@ export type Database = {
         }
         Relationships: []
       }
+      investment_transactions: {
+        Row: {
+          amount: number
+          created_at: string
+          description: string | null
+          external_id: string | null
+          id: string
+          investment_id: string
+          matched_transaction_id: string | null
+          movement_type: string
+          quantity: number | null
+          trade_date: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          description?: string | null
+          external_id?: string | null
+          id?: string
+          investment_id: string
+          matched_transaction_id?: string | null
+          movement_type: string
+          quantity?: number | null
+          trade_date: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          description?: string | null
+          external_id?: string | null
+          id?: string
+          investment_id?: string
+          matched_transaction_id?: string | null
+          movement_type?: string
+          quantity?: number | null
+          trade_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investment_transactions_investment_id_fkey"
+            columns: ["investment_id"]
+            isOneToOne: false
+            referencedRelation: "investments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investment_transactions_matched_transaction_id_fkey"
+            columns: ["matched_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investments: {
+        Row: {
+          amount_original: number | null
+          amount_profit: number | null
+          balance: number
+          bank_connection_id: string | null
+          created_at: string
+          currency: string
+          id: string
+          investment_subtype: string | null
+          investment_type: string
+          last_synced_at: string | null
+          name: string
+          pluggy_investment_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount_original?: number | null
+          amount_profit?: number | null
+          balance?: number
+          bank_connection_id?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          investment_subtype?: string | null
+          investment_type: string
+          last_synced_at?: string | null
+          name: string
+          pluggy_investment_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount_original?: number | null
+          amount_profit?: number | null
+          balance?: number
+          bank_connection_id?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          investment_subtype?: string | null
+          investment_type?: string
+          last_synced_at?: string | null
+          name?: string
+          pluggy_investment_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investments_bank_connection_id_fkey"
+            columns: ["bank_connection_id"]
+            isOneToOne: false
+            referencedRelation: "bank_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pluggy_credentials: {
         Row: {
           client_id: string
