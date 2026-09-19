@@ -3,7 +3,9 @@ import { FileUp, Loader2, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
+import { Pager } from "@/components/ui/pager";
 import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
+import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -72,74 +74,6 @@ function guessReconciliations(
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring";
-
-const PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
-
-function paginate<T>(items: T[], page: number, pageSize: number) {
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const clampedPage = Math.min(page, totalPages - 1);
-  const start = clampedPage * pageSize;
-  return { slice: items.slice(start, start + pageSize), page: clampedPage, totalPages };
-}
-
-function Pager({
-  total,
-  page,
-  totalPages,
-  pageSize,
-  onPageChange,
-  onPageSizeChange,
-}: {
-  total: number;
-  page: number;
-  totalPages: number;
-  pageSize: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (size: number) => void;
-}) {
-  if (!total) return null;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-      <span>
-        {total} lançamento{total === 1 ? "" : "s"} · página {page + 1} de {totalPages}
-      </span>
-      <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1.5">
-          Por página
-          <select
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
-            value={pageSize}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={page <= 0}
-          onClick={() => onPageChange(page - 1)}
-        >
-          Anterior
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={page >= totalPages - 1}
-          onClick={() => onPageChange(page + 1)}
-        >
-          Próxima
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function normalizeDate(raw: string): string | null {
   const value = raw.trim();
