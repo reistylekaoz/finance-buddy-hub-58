@@ -7,9 +7,9 @@ import {
 } from "@/lib/pluggy.functions";
 import { sendDailyDigests } from "@/lib/telegram.server";
 
-// Disparado diariamente às 01:00 pelo agendador da Lovable Cloud (protegido
-// por LOVABLE_CRON_SECRET) para trazer as movimentações do dia anterior de
-// todas as conexões bancárias, sem o usuário precisar clicar em nada.
+// Disparado diariamente às 18:00 pelo agendador da Lovable Cloud (protegido
+// por LOVABLE_CRON_SECRET) para trazer as movimentações do dia de todas as
+// conexões bancárias, sem o usuário precisar clicar em nada.
 export async function handleBankSyncCron(request: Request): Promise<Response> {
   const authError = await authenticateCronRequest(request);
   if (authError) return authError;

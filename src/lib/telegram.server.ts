@@ -579,7 +579,7 @@ async function sendDigestForRecipient(
   return true;
 }
 
-// Roda dentro do cron diário (01:00), depois da sincronização bancária: para
+// Roda dentro do cron diário (18:00), depois da sincronização bancária: para
 // cada destinatário do Telegram vinculado, manda (conforme a frequência que
 // ele escolheu e o escopo de contas/cartões dele) os gastos detectados via
 // integração e ainda não revisados.
