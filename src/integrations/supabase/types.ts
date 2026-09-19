@@ -422,6 +422,7 @@ export type Database = {
           id: string
           pluggy_configured: boolean
           preferred_currency: string
+          transactions_filters: Json | null
           updated_at: string
         }
         Insert: {
@@ -431,6 +432,7 @@ export type Database = {
           id: string
           pluggy_configured?: boolean
           preferred_currency?: string
+          transactions_filters?: Json | null
           updated_at?: string
         }
         Update: {
@@ -440,6 +442,7 @@ export type Database = {
           id?: string
           pluggy_configured?: boolean
           preferred_currency?: string
+          transactions_filters?: Json | null
           updated_at?: string
         }
         Relationships: []
