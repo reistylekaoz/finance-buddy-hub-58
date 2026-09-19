@@ -101,39 +101,51 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+export type PeriodPreset = { label: string; range: () => Period };
+
+function defaultPresetRange(kind: "month" | "lastMonth" | "last30" | "year"): Period {
+  const today = new Date();
+  let start: Date;
+  let end = today;
+  if (kind === "month") {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (kind === "lastMonth") {
+    start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    end = new Date(today.getFullYear(), today.getMonth(), 0);
+  } else if (kind === "year") {
+    start = new Date(today.getFullYear(), 0, 1);
+  } else {
+    start = new Date(today);
+    start.setDate(start.getDate() - 30);
+  }
+  return { from: isoDate(start), to: isoDate(end) };
+}
+
+const DEFAULT_PERIOD_PRESETS: PeriodPreset[] = [
+  { label: "Este mês", range: () => defaultPresetRange("month") },
+  { label: "Mês passado", range: () => defaultPresetRange("lastMonth") },
+  { label: "Últimos 30 dias", range: () => defaultPresetRange("last30") },
+  { label: "Este ano", range: () => defaultPresetRange("year") },
+];
+
 export function PeriodFilter({
   from,
   to,
   onChange,
+  presets = DEFAULT_PERIOD_PRESETS,
+  placeholder = "Período",
 }: {
   from: string;
   to: string;
   onChange: (next: Period) => void;
+  presets?: PeriodPreset[];
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const label =
     from || to
       ? `${from ? from.split("-").reverse().join("/") : "…"} – ${to ? to.split("-").reverse().join("/") : "…"}`
-      : "Período";
-
-  function preset(kind: "month" | "lastMonth" | "last30" | "year") {
-    const today = new Date();
-    let start: Date;
-    let end = today;
-    if (kind === "month") {
-      start = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else if (kind === "lastMonth") {
-      start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      end = new Date(today.getFullYear(), today.getMonth(), 0);
-    } else if (kind === "year") {
-      start = new Date(today.getFullYear(), 0, 1);
-    } else {
-      start = new Date(today);
-      start.setDate(start.getDate() - 30);
-    }
-    onChange({ from: isoDate(start), to: isoDate(end) });
-    setOpen(false);
-  }
+      : placeholder;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -148,18 +160,20 @@ export function PeriodFilter({
       </PopoverTrigger>
       <PopoverContent className="w-[min(300px,90vw)] space-y-3 p-3" align="start">
         <div className="grid grid-cols-2 gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => preset("month")}>
-            Este mês
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => preset("lastMonth")}>
-            Mês passado
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => preset("last30")}>
-            Últimos 30 dias
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => preset("year")}>
-            Este ano
-          </Button>
+          {presets.map((p) => (
+            <Button
+              key={p.label}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onChange(p.range());
+                setOpen(false);
+              }}
+            >
+              {p.label}
+            </Button>
+          ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="space-y-1 text-xs text-muted-foreground">

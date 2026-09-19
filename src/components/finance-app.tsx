@@ -58,7 +58,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
+import {
+  MultiSelectFilter,
+  PeriodFilter,
+  type Period,
+  type PeriodPreset,
+} from "@/components/ui/filters";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -163,6 +168,157 @@ const formatCurrency = (value: number, currency: string) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(value);
 const sortCurrencyKeys = (keys: string[]) =>
   [...keys].sort((a, b) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
+const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
+
+function sumTransactionsByCurrency(
+  items: Transaction[],
+  currencyOf: (accountId: string | null) => string,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const t of items) {
+    const c = currencyOf(t.account_id);
+    out[c] = (out[c] ?? 0) + Number(t.amount);
+  }
+  return out;
+}
+
+// Usado tanto pela aba de Centro de custo (todo o histórico) quanto pelo
+// dashboard (recalculado a cada troca do filtro de período).
+function buildCenterSummary(
+  costCenters: CostCenter[],
+  transactions: Transaction[],
+  currencyOf: (accountId: string | null) => string,
+) {
+  const rows = costCenters.map((center) => {
+    const own = transactions.filter(
+      (t) => t.cost_center_id === center.id && t.transaction_type !== "transfer",
+    );
+    const income = sumTransactionsByCurrency(
+      own.filter((t) => t.transaction_type === "income"),
+      currencyOf,
+    );
+    const expense = sumTransactionsByCurrency(
+      own.filter((t) => t.transaction_type === "expense"),
+      currencyOf,
+    );
+    const currencies = sortCurrencyKeys(
+      Array.from(new Set([...Object.keys(income), ...Object.keys(expense)])),
+    );
+    return { ...center, income, expense, currencies, count: own.length };
+  });
+  const orphan = transactions.filter((t) => !t.cost_center_id && t.transaction_type !== "transfer");
+  if (orphan.length) {
+    const income = sumTransactionsByCurrency(
+      orphan.filter((t) => t.transaction_type === "income"),
+      currencyOf,
+    );
+    const expense = sumTransactionsByCurrency(
+      orphan.filter((t) => t.transaction_type === "expense"),
+      currencyOf,
+    );
+    const currencies = sortCurrencyKeys(
+      Array.from(new Set([...Object.keys(income), ...Object.keys(expense)])),
+    );
+    rows.push({
+      id: "none",
+      user_id: "",
+      name: "Sem centro de custo",
+      center_type: "other",
+      description: null,
+      color: "orange",
+      is_active: true,
+      created_at: "",
+      updated_at: "",
+      income,
+      expense,
+      currencies,
+      count: orphan.length,
+    } as (typeof rows)[number]);
+  }
+  return rows.sort((a, b) => b.count - a.count);
+}
+
+// Árvore de categorias com totais por moeda: cada nó soma seus próprios
+// lançamentos ("own") e, separadamente, o total acumulado com os filhos
+// ("total") — é o que permite expandir uma categoria-pai e ver o total dela
+// se abrir em subcategorias, sem perder o valor lançado direto nela.
+// Recalculado pelo dashboard a cada troca do filtro de período.
+function buildCategoryReport(
+  categories: Category[],
+  transactions: Transaction[],
+  currencyOf: (accountId: string | null) => string,
+): { roots: CategoryNode[]; uncategorized: CategoryNode["own"] } {
+  const byId = new Map<string, CategoryNode>();
+  for (const c of categories) {
+    byId.set(c.id, {
+      id: c.id,
+      name: c.name,
+      category_type: c.category_type,
+      own: { income: {}, expense: {}, count: 0 },
+      total: { income: {}, expense: {}, count: 0 },
+      children: [],
+    });
+  }
+  const parentOf = new Map(categories.map((c) => [c.id, c.parent_id]));
+  for (const t of transactions) {
+    if (t.transaction_type === "transfer" || !t.category_id) continue;
+    const node = byId.get(t.category_id);
+    if (!node) continue;
+    const bucket = t.transaction_type === "income" ? node.own.income : node.own.expense;
+    const currency = currencyOf(t.account_id);
+    bucket[currency] = (bucket[currency] ?? 0) + Number(t.amount);
+    node.own.count += 1;
+  }
+  for (const [id, node] of byId) {
+    const parentId = parentOf.get(id);
+    if (parentId && byId.has(parentId)) {
+      byId.get(parentId)!.children.push(node);
+    }
+  }
+  const computed = new Set<string>();
+  function computeTotal(node: CategoryNode) {
+    if (computed.has(node.id)) return;
+    computed.add(node.id);
+    const total = {
+      income: { ...node.own.income },
+      expense: { ...node.own.expense },
+      count: node.own.count,
+    };
+    for (const child of node.children) {
+      computeTotal(child);
+      for (const [cur, val] of Object.entries(child.total.income))
+        total.income[cur] = (total.income[cur] ?? 0) + val;
+      for (const [cur, val] of Object.entries(child.total.expense))
+        total.expense[cur] = (total.expense[cur] ?? 0) + val;
+      total.count += child.total.count;
+    }
+    node.total = total;
+  }
+  for (const node of byId.values()) computeTotal(node);
+  const roots = Array.from(byId.values())
+    .filter((n) => {
+      const parentId = parentOf.get(n.id);
+      return !parentId || !byId.has(parentId);
+    })
+    .sort((a, b) => b.total.count - a.total.count);
+
+  const uncategorizedTx = transactions.filter(
+    (t) => !t.category_id && t.transaction_type !== "transfer",
+  );
+  const uncategorized = {
+    income: sumTransactionsByCurrency(
+      uncategorizedTx.filter((t) => t.transaction_type === "income"),
+      currencyOf,
+    ),
+    expense: sumTransactionsByCurrency(
+      uncategorizedTx.filter((t) => t.transaction_type === "expense"),
+      currencyOf,
+    ),
+    count: uncategorizedTx.length,
+  };
+
+  return { roots, uncategorized };
+}
 const dateFmt = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "short",
@@ -272,17 +428,6 @@ export function FinanceApp() {
     () => confirmedTransactions.filter((t) => reportableAccountIds.has(t.account_id)),
     [confirmedTransactions, reportableAccountIds],
   );
-  const sortCurrencies = (keys: string[]) =>
-    [...keys].sort((a, b) => (a === "BRL" ? -1 : b === "BRL" ? 1 : a.localeCompare(b)));
-  function sumByCurrency(items: Transaction[]): Record<string, number> {
-    const out: Record<string, number> = {};
-    for (const t of items) {
-      const c = currencyOf(t.account_id);
-      out[c] = (out[c] ?? 0) + Number(t.amount);
-    }
-    return out;
-  }
-
   const balanceByAccount = useMemo(
     () =>
       accounts.map((account) => {
@@ -311,28 +456,6 @@ export function FinanceApp() {
   );
 
   const totals = useMemo(() => {
-    const current = new Date();
-    const monthly = reportableTransactions.filter((tx) => {
-      const d = new Date(`${tx.transaction_date}T12:00:00`);
-      return d.getMonth() === current.getMonth() && d.getFullYear() === current.getFullYear();
-    });
-    const income = sumByCurrency(monthly.filter((t) => t.transaction_type === "income"));
-    const expense = sumByCurrency(monthly.filter((t) => t.transaction_type === "expense"));
-    const currencies = sortCurrencies(
-      Array.from(
-        new Set([
-          ...Object.keys(income),
-          ...Object.keys(expense),
-          ...accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"),
-        ]),
-      ),
-    );
-    const byCurrency = currencies.map((currency) => ({
-      currency,
-      income: income[currency] ?? 0,
-      expense: expense[currency] ?? 0,
-      result: (income[currency] ?? 0) - (expense[currency] ?? 0),
-    }));
     const assetTotal = assets
       .filter((a) => a.asset_type === "asset")
       .reduce((s, a) => s + Number(a.value), 0);
@@ -340,7 +463,7 @@ export function FinanceApp() {
       .filter((a) => a.asset_type === "liability")
       .reduce((s, a) => s + Number(a.value), 0);
     const reportableBalances = balanceByAccount.filter((a) => a.is_active);
-    const balanceCurrencies = sortCurrencies(
+    const balanceCurrencies = sortCurrencyKeys(
       Array.from(new Set(reportableBalances.map((a) => a.currency))),
     );
     // saldo por moeda de origem das contas, sem converter — só o total geral é convertido para BRL.
@@ -361,17 +484,16 @@ export function FinanceApp() {
     });
     // balance é o único total convertido para BRL — é o "saldo atual", não um histórico de transações.
     return {
-      byCurrency,
       balanceByCurrency,
       missingRateCurrencies,
       balance: reportableBalances.reduce((s, a) => s + (a.balanceBRL ?? 0), 0),
       assetTotal,
       liabilityTotal,
     };
-  }, [reportableTransactions, assets, balanceByAccount, accounts]);
+  }, [assets, balanceByAccount]);
 
   const chartDataByCurrency = useMemo(() => {
-    const currencies = sortCurrencies(
+    const currencies = sortCurrencyKeys(
       Array.from(new Set(accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"))),
     );
     if (!currencies.length) currencies.push("BRL");
@@ -401,121 +523,12 @@ export function FinanceApp() {
     }));
   }, [reportableTransactions, accounts]);
 
-  const centerSummary = useMemo(() => {
-    const rows = costCenters.map((center) => {
-      const own = reportableTransactions.filter(
-        (t) => t.cost_center_id === center.id && t.transaction_type !== "transfer",
-      );
-      const income = sumByCurrency(own.filter((t) => t.transaction_type === "income"));
-      const expense = sumByCurrency(own.filter((t) => t.transaction_type === "expense"));
-      const currencies = sortCurrencies(
-        Array.from(new Set([...Object.keys(income), ...Object.keys(expense)])),
-      );
-      return { ...center, income, expense, currencies, count: own.length };
-    });
-    const orphan = reportableTransactions.filter(
-      (t) => !t.cost_center_id && t.transaction_type !== "transfer",
-    );
-    if (orphan.length) {
-      const income = sumByCurrency(orphan.filter((t) => t.transaction_type === "income"));
-      const expense = sumByCurrency(orphan.filter((t) => t.transaction_type === "expense"));
-      const currencies = sortCurrencies(
-        Array.from(new Set([...Object.keys(income), ...Object.keys(expense)])),
-      );
-      rows.push({
-        id: "none",
-        user_id: "",
-        name: "Sem centro de custo",
-        center_type: "other",
-        description: null,
-        color: "orange",
-        is_active: true,
-        created_at: "",
-        updated_at: "",
-        income,
-        expense,
-        currencies,
-        count: orphan.length,
-      } as (typeof rows)[number]);
-    }
-    return rows.sort((a, b) => b.count - a.count);
-  }, [costCenters, reportableTransactions]);
-
-  // Árvore de categorias com totais por moeda: cada nó soma seus próprios
-  // lançamentos ("own") e, separadamente, o total acumulado com os filhos
-  // ("total") — é o que permite expandir uma categoria-pai e ver o total dela
-  // se abrir em subcategorias, sem perder o valor lançado direto nela.
-  const categoryReport = useMemo(() => {
-    type Node = {
-      id: string;
-      name: string;
-      category_type: "income" | "expense";
-      parent_id: string | null;
-      own: { income: Record<string, number>; expense: Record<string, number>; count: number };
-      total: { income: Record<string, number>; expense: Record<string, number>; count: number };
-      children: Node[];
-    };
-    const byId = new Map<string, Node>();
-    for (const c of categories) {
-      byId.set(c.id, {
-        id: c.id,
-        name: c.name,
-        category_type: c.category_type,
-        parent_id: c.parent_id,
-        own: { income: {}, expense: {}, count: 0 },
-        total: { income: {}, expense: {}, count: 0 },
-        children: [],
-      });
-    }
-    for (const t of reportableTransactions) {
-      if (t.transaction_type === "transfer" || !t.category_id) continue;
-      const node = byId.get(t.category_id);
-      if (!node) continue;
-      const bucket = t.transaction_type === "income" ? node.own.income : node.own.expense;
-      const currency = currencyOf(t.account_id);
-      bucket[currency] = (bucket[currency] ?? 0) + Number(t.amount);
-      node.own.count += 1;
-    }
-    for (const node of byId.values()) {
-      if (node.parent_id && byId.has(node.parent_id)) {
-        byId.get(node.parent_id)!.children.push(node);
-      }
-    }
-    const computed = new Set<string>();
-    function computeTotal(node: Node) {
-      if (computed.has(node.id)) return;
-      computed.add(node.id);
-      const total = {
-        income: { ...node.own.income },
-        expense: { ...node.own.expense },
-        count: node.own.count,
-      };
-      for (const child of node.children) {
-        computeTotal(child);
-        for (const [cur, val] of Object.entries(child.total.income))
-          total.income[cur] = (total.income[cur] ?? 0) + val;
-        for (const [cur, val] of Object.entries(child.total.expense))
-          total.expense[cur] = (total.expense[cur] ?? 0) + val;
-        total.count += child.total.count;
-      }
-      node.total = total;
-    }
-    for (const node of byId.values()) computeTotal(node);
-    const roots = Array.from(byId.values())
-      .filter((n) => !n.parent_id || !byId.has(n.parent_id))
-      .sort((a, b) => b.total.count - a.total.count);
-
-    const uncategorizedTx = reportableTransactions.filter(
-      (t) => !t.category_id && t.transaction_type !== "transfer",
-    );
-    const uncategorized = {
-      income: sumByCurrency(uncategorizedTx.filter((t) => t.transaction_type === "income")),
-      expense: sumByCurrency(uncategorizedTx.filter((t) => t.transaction_type === "expense")),
-      count: uncategorizedTx.length,
-    };
-
-    return { roots, uncategorized };
-  }, [categories, reportableTransactions]);
+  // Usada pela aba de Centro de custo (todo o histórico); o dashboard tem a
+  // sua própria versão recalculada a cada troca do filtro de período.
+  const centerSummary = useMemo(
+    () => buildCenterSummary(costCenters, reportableTransactions, currencyOf),
+    [costCenters, reportableTransactions],
+  );
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -951,10 +964,11 @@ export function FinanceApp() {
                   chartDataByCurrency={chartDataByCurrency}
                   transactions={reportableTransactions}
                   accounts={accounts}
+                  categories={categories}
+                  costCenters={costCenters}
                   categoryPath={categoryPath}
                   centerName={centerName}
-                  centerSummary={centerSummary}
-                  categoryReport={categoryReport}
+                  currencyOf={currencyOf}
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                 />
@@ -1611,15 +1625,15 @@ function Dashboard({
   chartDataByCurrency,
   transactions,
   accounts,
+  categories,
+  costCenters,
   categoryPath,
   centerName,
-  centerSummary,
-  categoryReport,
+  currencyOf,
   onEditTx,
   onDeleteTx,
 }: {
   totals: {
-    byCurrency: { currency: string; income: number; expense: number; result: number }[];
     balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
     missingRateCurrencies: string[];
     balance: number;
@@ -1633,31 +1647,109 @@ function Dashboard({
   }[];
   transactions: Transaction[];
   accounts: Account[];
+  categories: Category[];
+  costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
-  centerSummary: (CostCenter & {
-    income: Record<string, number>;
-    expense: Record<string, number>;
-    currencies: string[];
-    count: number;
-  })[];
-  categoryReport: {
-    roots: CategoryNode[];
-    uncategorized: {
-      income: Record<string, number>;
-      expense: Record<string, number>;
-      count: number;
-    };
-  };
+  currencyOf: (accountId: string | null) => string;
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
 }) {
   const [currencyFilter, setCurrencyFilter] = useState<string>("all");
+  const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+
+  const periodPresets: PeriodPreset[] = [
+    {
+      label: "Hoje",
+      range: () => {
+        const d = isoDate(new Date());
+        return { from: d, to: d };
+      },
+    },
+    {
+      label: "Essa semana",
+      range: () => {
+        const today = new Date();
+        const day = today.getDay();
+        const start = new Date(today);
+        start.setDate(start.getDate() + (day === 0 ? -6 : 1 - day));
+        return { from: isoDate(start), to: isoDate(today) };
+      },
+    },
+    {
+      label: "Esse mês",
+      range: () => {
+        const today = new Date();
+        return {
+          from: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)),
+          to: isoDate(today),
+        };
+      },
+    },
+    {
+      label: "Esse ano",
+      range: () => {
+        const today = new Date();
+        return { from: isoDate(new Date(today.getFullYear(), 0, 1)), to: isoDate(today) };
+      },
+    },
+  ];
+
+  // Todas as seções que somam receita/despesa (cards, gráfico de tendência
+  // continua fixo em 6 meses, mas o resto sim) recalculam a partir daqui —
+  // o saldo (ponto no tempo) fica de fora, não faz sentido "saldo de hoje" vs.
+  // "saldo do ano" no jeito que o app modela conta.
+  const periodTransactions = useMemo(
+    () =>
+      transactions.filter((tx) => {
+        if (period.from && tx.transaction_date < period.from) return false;
+        if (period.to && tx.transaction_date > period.to) return false;
+        return true;
+      }),
+    [transactions, period],
+  );
+
+  const periodByCurrency = useMemo(() => {
+    const income = sumTransactionsByCurrency(
+      periodTransactions.filter((t) => t.transaction_type === "income"),
+      currencyOf,
+    );
+    const expense = sumTransactionsByCurrency(
+      periodTransactions.filter((t) => t.transaction_type === "expense"),
+      currencyOf,
+    );
+    const currencies = sortCurrencyKeys(
+      Array.from(
+        new Set([
+          ...Object.keys(income),
+          ...Object.keys(expense),
+          ...accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"),
+        ]),
+      ),
+    );
+    return currencies.map((currency) => ({
+      currency,
+      income: income[currency] ?? 0,
+      expense: expense[currency] ?? 0,
+      result: (income[currency] ?? 0) - (expense[currency] ?? 0),
+    }));
+  }, [periodTransactions, accounts]);
+
+  const periodCenterSummary = useMemo(
+    () => buildCenterSummary(costCenters, periodTransactions, currencyOf),
+    [costCenters, periodTransactions],
+  );
+
+  const periodCategoryReport = useMemo(
+    () => buildCategoryReport(categories, periodTransactions, currencyOf),
+    [categories, periodTransactions],
+  );
+
   const availableCurrencies = sortCurrencyKeys(
     Array.from(
       new Set<string>([
         ...totals.balanceByCurrency.map((c) => c.currency),
-        ...totals.byCurrency.map((c) => c.currency),
+        ...periodByCurrency.map((c) => c.currency),
       ]),
     ),
   );
@@ -1667,16 +1759,13 @@ function Dashboard({
   const filteredBalanceByCurrency = totals.balanceByCurrency.filter((c) =>
     showCurrency(c.currency),
   );
-  const filteredByCurrency = totals.byCurrency.filter((c) => showCurrency(c.currency));
+  const filteredByCurrency = periodByCurrency.filter((c) => showCurrency(c.currency));
   const filteredChartData = chartDataByCurrency.filter((cd) => showCurrency(cd.currency));
-  const filteredTransactions = isAll
-    ? transactions
-    : transactions.filter(
-        (tx: Transaction) =>
-          (accounts.find((a: Account) => a.id === tx.account_id)?.currency || "BRL") ===
-          currencyFilter,
-      );
-  const filteredCenterSummary = centerSummary
+  const filteredTransactions = periodTransactions.filter(
+    (tx) =>
+      isAll || (accounts.find((a) => a.id === tx.account_id)?.currency || "BRL") === currencyFilter,
+  );
+  const filteredCenterSummary = periodCenterSummary
     .map((r) => ({ ...r, currencies: r.currencies.filter(showCurrency) }))
     .filter((r) => r.currencies.length > 0);
 
@@ -1701,7 +1790,14 @@ function Dashboard({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <PeriodFilter
+          from={period.from}
+          to={period.to}
+          onChange={setPeriod}
+          presets={periodPresets}
+          placeholder="Todo o período"
+        />
         <select
           className={cn(selectClass, "h-9 w-auto")}
           value={currencyFilter}
@@ -1741,19 +1837,19 @@ function Dashboard({
         {filteredByCurrency.map((c) => (
           <div key={c.currency} className="contents">
             <Metric
-              label={`Receitas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
+              label={`Receitas${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
               value={c.income}
               tone="positive"
               currency={c.currency}
             />
             <Metric
-              label={`Despesas do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
+              label={`Despesas${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
               value={c.expense}
               tone="negative"
               currency={c.currency}
             />
             <Metric
-              label={`Resultado do mês${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
+              label={`Resultado${c.currency !== "BRL" ? ` (${c.currency})` : ""}`}
               value={c.result}
               tone={c.result >= 0 ? "positive" : "negative"}
               currency={c.currency}
@@ -1828,9 +1924,9 @@ function Dashboard({
         />
       </section>
       <CategoryBreakdown
-        categoryReport={categoryReport}
+        categoryReport={periodCategoryReport}
         currencyFilter={currencyFilter}
-        transactions={transactions}
+        transactions={periodTransactions}
         accounts={accounts}
         categoryPath={categoryPath}
         centerName={centerName}
