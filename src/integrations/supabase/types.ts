@@ -651,6 +651,7 @@ export type Database = {
     }
     Functions: {
       debug_readonly_sql: { Args: { query: string }; Returns: Json }
+      has_pluggy_credentials: { Args: never; Returns: boolean }
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"

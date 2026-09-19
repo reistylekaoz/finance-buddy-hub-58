@@ -111,15 +111,17 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
 
   async function load() {
     setLoading(true);
-    const [{ data: profile }, { data: connectionRows }, { data: accountRows }] = await Promise.all([
-      supabase.from("profiles").select("pluggy_client_id, pluggy_client_secret").maybeSingle(),
-      supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
-      supabase
-        .from("accounts")
-        .select("bank_connection_id, institution, owner_name, branch_number, account_number")
-        .not("bank_connection_id", "is", null),
-    ]);
-    setHasCredentials(!!profile?.pluggy_client_id && !!profile?.pluggy_client_secret);
+    const [{ data: profile }, { data: hasCreds }, { data: connectionRows }, { data: accountRows }] =
+      await Promise.all([
+        supabase.from("profiles").select("pluggy_client_id").maybeSingle(),
+        supabase.rpc("has_pluggy_credentials"),
+        supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
+        supabase
+          .from("accounts")
+          .select("bank_connection_id, institution, owner_name, branch_number, account_number")
+          .not("bank_connection_id", "is", null),
+      ]);
+    setHasCredentials(hasCreds === true);
     setClientId(profile?.pluggy_client_id ?? "");
     setConnections(connectionRows ?? []);
     setAccountByConnection(
