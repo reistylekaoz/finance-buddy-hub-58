@@ -13,27 +13,25 @@ export type PluggyCredentials = { clientId: string; clientSecret: string };
 // próprios, cadastrados em Configurações) — sem isso não dá pra autenticar
 // nem consultar nada da API dele.
 //
-// A Lovable Cloud detecta a coluna pluggy_client_secret como um segredo e
-// revoga o SELECT dela pro role "authenticated" automaticamente (o usuário
-// ainda consegue escrever nela, só não ler de volta) — por isso a leitura
-// aqui precisa ser sempre com o client de service role, mesmo quando quem
-// chamou passou um client com RLS do próprio usuário.
+// As credenciais ficam na tabela isolada public.pluggy_credentials, sem
+// nenhuma policy de leitura: nem o próprio usuário consegue lê-las pelo
+// navegador. Só o backend, com service role, tem acesso.
 export async function getUserPluggyCredentials(userId: string): Promise<PluggyCredentials> {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data, error } = await supabaseAdmin
-    .from("profiles")
-    .select("pluggy_client_id, pluggy_client_secret")
-    .eq("id", userId)
+    .from("pluggy_credentials")
+    .select("client_id, client_secret")
+    .eq("user_id", userId)
     .maybeSingle();
   if (error) {
     throw new Error(`Falha ao buscar suas credenciais Pluggy: ${error.message}`);
   }
-  if (!data?.pluggy_client_id || !data?.pluggy_client_secret) {
+  if (!data?.client_id || !data?.client_secret) {
     throw new Error(
       "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
     );
   }
-  return { clientId: data.pluggy_client_id, clientSecret: data.pluggy_client_secret };
+  return { clientId: data.client_id, clientSecret: data.client_secret };
 }
 
 type PluggyAccount = {
