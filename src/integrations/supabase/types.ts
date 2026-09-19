@@ -486,12 +486,11 @@ export type Database = {
           created_at: string
           id: string
           label: string
-          link_token: string
           notify_daily: boolean
           notify_monthly: boolean
           notify_weekly: boolean
           telegram_chat_id: string | null
-          telegram_username: string | null
+          telegram_username: string
           updated_at: string
           user_id: string
         }
@@ -502,12 +501,11 @@ export type Database = {
           created_at?: string
           id?: string
           label?: string
-          link_token?: string
           notify_daily?: boolean
           notify_monthly?: boolean
           notify_weekly?: boolean
           telegram_chat_id?: string | null
-          telegram_username?: string | null
+          telegram_username: string
           updated_at?: string
           user_id: string
         }
@@ -518,12 +516,11 @@ export type Database = {
           created_at?: string
           id?: string
           label?: string
-          link_token?: string
           notify_daily?: boolean
           notify_monthly?: boolean
           notify_weekly?: boolean
           telegram_chat_id?: string | null
-          telegram_username?: string | null
+          telegram_username?: string
           updated_at?: string
           user_id?: string
         }
