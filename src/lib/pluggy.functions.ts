@@ -242,6 +242,10 @@ export async function syncConnection(
         .from("credit_cards")
         .select("id")
         .eq("pluggy_account_id", pAccount.id)
+        // Sempre limitar ao dono da conexão: o cron roda com o cliente de
+        // serviço (sem RLS) para todos os usuários, e um pluggy_account_id
+        // repetido entre usuários (sandbox) religaria o cartão de outro.
+        .eq("user_id", userId)
         .maybeSingle();
       let cardId = existingCard?.id ?? null;
       if (!cardId) {
