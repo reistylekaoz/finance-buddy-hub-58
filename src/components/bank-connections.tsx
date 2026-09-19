@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import {
   createPluggyConnectToken,
   deleteBankConnection,
+  discoverPluggyItems,
   registerBankConnection,
   savePluggyCredentials,
   syncBankConnection,
@@ -114,15 +115,18 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     // As credenciais Pluggy (client id e secret) ficam numa tabela isolada que
     // o navegador não consegue ler — só o backend, com service role. Aqui o
     // perfil traz apenas o indicador booleano "configurado ou não".
-    const [{ data: profile, error: profileError }, { data: connectionRows }, { data: accountRows }] =
-      await Promise.all([
-        supabase.from("profiles").select("pluggy_configured").maybeSingle(),
-        supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
-        supabase
-          .from("accounts")
-          .select("bank_connection_id, institution, owner_name, branch_number, account_number")
-          .not("bank_connection_id", "is", null),
-      ]);
+    const [
+      { data: profile, error: profileError },
+      { data: connectionRows },
+      { data: accountRows },
+    ] = await Promise.all([
+      supabase.from("profiles").select("pluggy_configured").maybeSingle(),
+      supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
+      supabase
+        .from("accounts")
+        .select("bank_connection_id, institution, owner_name, branch_number, account_number")
+        .not("bank_connection_id", "is", null),
+    ]);
     if (profileError) {
       toast.error(`Falha ao carregar suas credenciais: ${profileError.message}`);
     }
@@ -253,6 +257,36 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     }
     if (failures.length) {
       toast.error(`Falhou em ${failures.length}: ${failures.join(" · ")}`);
+    }
+  }
+
+  const [discovering, setDiscovering] = useState(false);
+  async function discoverItems() {
+    setDiscovering(true);
+    try {
+      const result = await discoverPluggyItems();
+      if (!result.total) {
+        toast.error("Nenhum item encontrado na Pluggy pra essas credenciais.");
+        return;
+      }
+      if (result.succeeded) {
+        toast.success(
+          `${result.succeeded} de ${result.total} item(ns) registrado(s) e sincronizando.`,
+        );
+        await load();
+        onSynced();
+      }
+      if (result.failures.length) {
+        toast.error(
+          `Falhou em ${result.failures.length}: ${result.failures.map((f) => `${f.id}: ${f.message}`).join(" · ")}`,
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Falha ao buscar itens automaticamente.",
+      );
+    } finally {
+      setDiscovering(false);
     }
   }
 
@@ -403,10 +437,26 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                 Conectar novo banco
               </Button>
             </div>
-            <details className="mt-4 text-sm">
+            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-3">
+              <div className="flex-1 text-xs text-muted-foreground">
+                Já existem itens conectados direto pela Pluggy (dashboard deles, sandbox etc.)?
+                Busca todos automaticamente e registra de uma vez, sem colar ID por ID.
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void discoverItems()}
+                disabled={discovering}
+              >
+                {discovering ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                Buscar itens automaticamente
+              </Button>
+            </div>
+            <details className="mt-3 text-sm">
               <summary className="cursor-pointer text-xs text-muted-foreground">
-                IDs de itens existentes (conectados direto pela Pluggy, ou erro
-                "ITEM_USER_ALREADY_EXISTS")
+                Não funcionou? Cole os IDs manualmente (a busca automática é um recurso opt-in da
+                Pluggy — pode não estar habilitado pra sua conta)
               </summary>
               <div className="mt-2 flex flex-wrap items-end gap-2">
                 <label className="min-w-[260px] flex-1 space-y-1">
