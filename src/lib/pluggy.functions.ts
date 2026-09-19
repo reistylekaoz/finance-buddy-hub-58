@@ -710,50 +710,111 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
     return { connectToken: result.accessToken };
   });
 
+// Extraído de registerBankConnection pra ser reaproveitado também pela
+// descoberta automática de itens (discoverPluggyItems), que registra vários
+// de uma vez.
+async function registerAndSyncItem(
+  supabase: Db,
+  userId: string,
+  credentials: PluggyCredentials,
+  pluggyItemId: string,
+) {
+  const { data: existing } = await supabase
+    .from("bank_connections")
+    .select("id")
+    .eq("pluggy_item_id", pluggyItemId)
+    .maybeSingle();
+  let connectionId = existing?.id ?? null;
+  if (!connectionId) {
+    const { data: created, error } = await supabase
+      .from("bank_connections")
+      .insert({ user_id: userId, pluggy_item_id: pluggyItemId, status: "connecting" })
+      .select("id")
+      .single();
+    if (error || !created) throw new Error(error?.message ?? "Falha ao registrar conexão.");
+    connectionId = created.id;
+  }
+  try {
+    const result = await syncConnection(supabase, userId, credentials, {
+      id: connectionId,
+      pluggy_item_id: pluggyItemId,
+    });
+    return { connectionId, ...result };
+  } catch (syncError) {
+    const message = syncError instanceof Error ? syncError.message : String(syncError);
+    await supabase
+      .from("bank_connections")
+      .update({ status: "error", status_detail: message })
+      .eq("id", connectionId);
+    await createSupportTicket(supabase, {
+      user_id: userId,
+      bank_connection_id: connectionId,
+      title: "Falha ao sincronizar conexão bancária recém-criada",
+      description: message,
+    });
+    throw syncError;
+  }
+}
+
 export const registerBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { pluggyItemId: string }) => input)
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
-    const { data: existing } = await context.supabase
-      .from("bank_connections")
-      .select("id")
-      .eq("pluggy_item_id", data.pluggyItemId)
-      .maybeSingle();
-    let connectionId = existing?.id ?? null;
-    if (!connectionId) {
-      const { data: created, error } = await context.supabase
-        .from("bank_connections")
-        .insert({
-          user_id: context.userId,
-          pluggy_item_id: data.pluggyItemId,
-          status: "connecting",
-        })
-        .select("id")
-        .single();
-      if (error || !created) throw new Error(error?.message ?? "Falha ao registrar conexão.");
-      connectionId = created.id;
-    }
+    return registerAndSyncItem(context.supabase, context.userId, credentials, data.pluggyItemId);
+  });
+
+// GET /v2/items é opt-in na Pluggy (precisa ser habilitado pelo suporte
+// deles pra cada conta) — por isso segue com uma mensagem clara em vez de
+// travar a tela quando não está disponível, deixando o registro manual de
+// IDs como alternativa.
+async function fetchAllPluggyItemIds(credentials: PluggyCredentials): Promise<string[]> {
+  const ids: string[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const params = new URLSearchParams(after ? { after } : {});
+    const data = await pluggyFetch<{ results: { id: string }[]; next: string | null }>(
+      credentials,
+      `/v2/items?${params.toString()}`,
+    );
+    ids.push(...data.results.map((r) => r.id));
+    if (!data.next) break;
+    const nextAfter = new URL(data.next, PLUGGY_BASE_URL).searchParams.get("after");
+    if (!nextAfter) break;
+    after = nextAfter;
+  }
+  return ids;
+}
+
+// Busca todos os itens já existentes na Pluggy pro clientId do usuário e
+// registra/sincroniza cada um, sem precisar colar ID por ID manualmente.
+export const discoverPluggyItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const credentials = await getUserPluggyCredentials(context.userId);
+    let itemIds: string[];
     try {
-      const result = await syncConnection(context.supabase, context.userId, credentials, {
-        id: connectionId,
-        pluggy_item_id: data.pluggyItemId,
-      });
-      return { connectionId, ...result };
-    } catch (syncError) {
-      const message = syncError instanceof Error ? syncError.message : String(syncError);
-      await context.supabase
-        .from("bank_connections")
-        .update({ status: "error", status_detail: message })
-        .eq("id", connectionId);
-      await createSupportTicket(context.supabase, {
-        user_id: context.userId,
-        bank_connection_id: connectionId,
-        title: "Falha ao sincronizar conexão bancária recém-criada",
-        description: message,
-      });
-      throw syncError;
+      itemIds = await fetchAllPluggyItemIds(credentials);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Não foi possível listar os itens automaticamente. O recurso de listagem (GET /v2/items) é opt-in na Pluggy — pode ser preciso pedir pro suporte deles habilitar pra sua conta. Cole os IDs manualmente enquanto isso. Detalhe: ${message}`,
+      );
     }
+    let succeeded = 0;
+    const failures: { id: string; message: string }[] = [];
+    for (const itemId of itemIds) {
+      try {
+        await registerAndSyncItem(context.supabase, context.userId, credentials, itemId);
+        succeeded += 1;
+      } catch (error) {
+        failures.push({
+          id: itemId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { total: itemIds.length, succeeded, failures };
   });
 
 // Bloqueia sincronização manual repetida antes desse intervalo; a
