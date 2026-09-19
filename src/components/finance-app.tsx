@@ -88,6 +88,13 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type TransactionsFilters = {
+  accountIds: Set<string>;
+  categoryIds: Set<string>;
+  costCenterIds: Set<string>;
+  period: Period;
+  sortKey: SortKey;
+};
 type View =
   | "dashboard"
   | "accounts"
@@ -366,7 +373,10 @@ export function FinanceApp() {
     setLoading(true);
     const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
       await Promise.all([
-        supabase.from("profiles").select("display_name, dashboard_filters").maybeSingle(),
+        supabase
+          .from("profiles")
+          .select("display_name, dashboard_filters, transactions_filters")
+          .maybeSingle(),
         supabase.from("accounts").select("*").order("created_at"),
         supabase.from("categories").select("*").order("name"),
         fetchAllRows<Transaction>((from, to) =>
@@ -393,6 +403,22 @@ export function FinanceApp() {
     if (savedFilters) {
       setDashboardCurrencyFilterRaw(savedFilters.currency ?? "all");
       setDashboardPeriodRaw(savedFilters.period ?? { from: "", to: "" });
+    }
+    const savedTxFilters = profile.data?.transactions_filters as {
+      accountIds?: string[];
+      categoryIds?: string[];
+      costCenterIds?: string[];
+      period?: Period;
+      sortKey?: SortKey;
+    } | null;
+    if (savedTxFilters) {
+      setTxFiltersRaw({
+        accountIds: new Set(savedTxFilters.accountIds ?? []),
+        categoryIds: new Set(savedTxFilters.categoryIds ?? []),
+        costCenterIds: new Set(savedTxFilters.costCenterIds ?? []),
+        period: savedTxFilters.period ?? { from: "", to: "" },
+        sortKey: savedTxFilters.sortKey ?? "date_desc",
+      });
     }
     setLoading(false);
   }
@@ -422,6 +448,37 @@ export function FinanceApp() {
   function setDashboardPeriod(value: Period) {
     setDashboardPeriodRaw(value);
     void persistDashboardFilters({ currency: dashboardCurrencyFilter, period: value });
+  }
+
+  // Filtros da tela de Lançamentos: mesma ideia do dashboard, persistidos em
+  // profiles.transactions_filters pra reaparecer sozinhos na próxima sessão.
+  const [txFilters, setTxFiltersRaw] = useState<TransactionsFilters>({
+    accountIds: new Set(),
+    categoryIds: new Set(),
+    costCenterIds: new Set(),
+    period: { from: "", to: "" },
+    sortKey: "date_desc",
+  });
+  async function persistTransactionsFilters(next: TransactionsFilters) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return;
+    await supabase
+      .from("profiles")
+      .update({
+        transactions_filters: {
+          accountIds: Array.from(next.accountIds),
+          categoryIds: Array.from(next.categoryIds),
+          costCenterIds: Array.from(next.costCenterIds),
+          period: next.period,
+          sortKey: next.sortKey,
+        },
+      })
+      .eq("id", userId);
+  }
+  function setTxFilters(next: TransactionsFilters) {
+    setTxFiltersRaw(next);
+    void persistTransactionsFilters(next);
   }
   useEffect(() => {
     void (async () => {
@@ -1052,6 +1109,8 @@ export function FinanceApp() {
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                   onConfirmTx={openConfirmProvision}
                   onBulkUpdated={load}
+                  filters={txFilters}
+                  onFiltersChange={setTxFilters}
                 />
               )}
               {view === "import" && (
@@ -2744,6 +2803,8 @@ function Transactions({
   onDeleteTx,
   onConfirmTx,
   onBulkUpdated,
+  filters,
+  onFiltersChange,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -2756,12 +2817,10 @@ function Transactions({
   onDeleteTx: (tx: Transaction) => void;
   onConfirmTx: (tx: Transaction) => void;
   onBulkUpdated: () => void;
+  filters: TransactionsFilters;
+  onFiltersChange: (next: TransactionsFilters) => void;
 }) {
-  const [accountIds, setAccountIds] = useState<Set<string>>(new Set());
-  const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
-  const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
-  const [period, setPeriod] = useState<Period>({ from: "", to: "" });
-  const [sortKey, setSortKey] = useState<SortKey>("date_desc");
+  const { accountIds, categoryIds, costCenterIds, period, sortKey } = filters;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -2827,10 +2886,13 @@ function Transactions({
     !!period.to;
 
   function clearFilters() {
-    setAccountIds(new Set());
-    setCategoryIds(new Set());
-    setCostCenterIds(new Set());
-    setPeriod({ from: "", to: "" });
+    onFiltersChange({
+      ...filters,
+      accountIds: new Set(),
+      categoryIds: new Set(),
+      costCenterIds: new Set(),
+      period: { from: "", to: "" },
+    });
   }
 
   function toggleSelect(id: string, checked: boolean) {
@@ -2901,30 +2963,37 @@ function Transactions({
           label="Categoria"
           options={categoryOptions}
           selected={categoryIds}
-          onChange={setCategoryIds}
+          onChange={(next) => onFiltersChange({ ...filters, categoryIds: next })}
           searchPlaceholder="Buscar categoria…"
         />
         <MultiSelectFilter
           label="Centro de custo"
           options={costCenterOptions}
           selected={costCenterIds}
-          onChange={setCostCenterIds}
+          onChange={(next) => onFiltersChange({ ...filters, costCenterIds: next })}
           searchPlaceholder="Buscar centro de custo…"
         />
         <MultiSelectFilter
           label="Conta"
           options={accountOptions}
           selected={accountIds}
-          onChange={setAccountIds}
+          onChange={(next) => onFiltersChange({ ...filters, accountIds: next })}
           searchPlaceholder="Buscar conta…"
         />
-        <PeriodFilter from={period.from} to={period.to} onChange={setPeriod} />
+        <PeriodFilter
+          from={period.from}
+          to={period.to}
+          onChange={(next) => onFiltersChange({ ...filters, period: next })}
+        />
         {hasActiveFilters && (
           <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
             Limpar filtros
           </Button>
         )}
-        <SortSelect value={sortKey} onChange={setSortKey} />
+        <SortSelect
+          value={sortKey}
+          onChange={(next) => onFiltersChange({ ...filters, sortKey: next })}
+        />
       </div>
       {pendingCount > 0 && (
         <p className="text-sm text-muted-foreground">
