@@ -94,8 +94,6 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
-type Investment = Database["public"]["Tables"]["investments"]["Row"];
-type InvestmentTransaction = Database["public"]["Tables"]["investment_transactions"]["Row"];
 type TransactionsFilters = {
   accountIds: Set<string>;
   categoryIds: Set<string>;
@@ -383,53 +381,36 @@ export function FinanceApp() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [investments, setInvestments] = useState<Investment[]>([]);
-  const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
 
   async function load() {
     setLoading(true);
-    const [
-      profile,
-      accountRows,
-      categoryRows,
-      transactionsData,
-      assetRows,
-      centerRows,
-      investmentRows,
-      investmentTxRows,
-    ] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("display_name, dashboard_filters, transactions_filters")
-        .maybeSingle(),
-      supabase.from("accounts").select("*").order("created_at"),
-      supabase.from("categories").select("*").order("name"),
-      fetchAllRows<Transaction>((from, to) =>
+    const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
+      await Promise.all([
         supabase
-          .from("transactions")
-          .select("*")
-          .order("transaction_date", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      supabase.from("assets").select("*").order("created_at", { ascending: false }),
-      supabase.from("cost_centers").select("*").order("name"),
-      supabase.from("investments").select("*").order("name"),
-      supabase
-        .from("investment_transactions")
-        .select("*")
-        .order("trade_date", { ascending: false }),
-    ]);
+          .from("profiles")
+          .select("display_name, dashboard_filters, transactions_filters")
+          .maybeSingle(),
+        supabase.from("accounts").select("*").order("created_at"),
+        supabase.from("categories").select("*").order("name"),
+        fetchAllRows<Transaction>((from, to) =>
+          supabase
+            .from("transactions")
+            .select("*")
+            .order("transaction_date", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
+        supabase.from("assets").select("*").order("created_at", { ascending: false }),
+        supabase.from("cost_centers").select("*").order("name"),
+      ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
     setCategories(categoryRows.data ?? []);
     setTransactions(transactionsData);
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
-    setInvestments(investmentRows.data ?? []);
-    setInvestmentTransactions(investmentTxRows.data ?? []);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -1176,12 +1157,7 @@ export function FinanceApp() {
                   accounts={accounts}
                 />
               )}
-              {view === "investments" && (
-                <Investments
-                  investments={investments}
-                  investmentTransactions={investmentTransactions}
-                />
-              )}
+              {view === "investments" && <Investments />}
               {view === "bank_connections" && <BankConnections onSynced={load} />}
               {view === "categories" && (
                 <Categories
