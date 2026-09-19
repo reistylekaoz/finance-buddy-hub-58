@@ -417,6 +417,7 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
+          dashboard_filters: Json | null
           display_name: string
           id: string
           pluggy_configured: boolean
@@ -425,6 +426,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          dashboard_filters?: Json | null
           display_name?: string
           id: string
           pluggy_configured?: boolean
@@ -433,6 +435,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          dashboard_filters?: Json | null
           display_name?: string
           id?: string
           pluggy_configured?: boolean
