@@ -801,6 +801,7 @@ export function CreditCards({
                     <div className="mt-3 space-y-2">
                       {sortByKey(group.items, sortKey, {
                         date: (t) => t.purchase_date,
+                        settlementDate: (t) => t.paid_at ?? t.purchase_date,
                         amount: (t) => t.amount,
                         description: (t) => t.description,
                       }).map((tx) => (
