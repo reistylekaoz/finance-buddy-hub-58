@@ -461,7 +461,6 @@ export async function syncConnection(
         .eq("user_id", userId)
         .maybeSingle();
       let accountId = existingAccount?.id ?? null;
-      const isNewAccount = !accountId;
       // A Pluggy manda o conector usado (ex.: "MeuPluggy", o agregador), não
       // o banco em si — a instituição real vem dos dados da própria conta.
       const institutionName =
@@ -471,6 +470,31 @@ export async function syncConnection(
         pAccount.number,
       );
       const ownerName = pAccount.owner || null;
+
+      // Antes de criar, tenta adotar uma conta que o próprio usuário já tinha
+      // cadastrado à mão para esse mesmo banco (mesmo número de conta, ou
+      // mesmo nome). Sem isso a conexão criava uma segunda conta e o saldo
+      // aparecia duplicado na tela de contas: a antiga com o saldo congelado
+      // e a nova com o saldo real.
+      if (!accountId) {
+        const candidates = await supabase
+          .from("accounts")
+          .select("id, name, account_number")
+          .eq("user_id", userId)
+          .is("pluggy_account_id", null);
+        const normalize = (value: string | null | undefined) =>
+          (value ?? "").replace(/[^0-9a-zA-Z]/g, "").toLowerCase();
+        const targetNumber = normalize(accountNumber);
+        const targetName = normalize(pAccount.name);
+        const adopted =
+          (targetNumber &&
+            candidates.data?.find((a) => normalize(a.account_number) === targetNumber)) ||
+          (targetName && candidates.data?.find((a) => normalize(a.name) === targetName)) ||
+          null;
+        if (adopted) accountId = adopted.id;
+      }
+      const isNewAccount = !existingAccount?.id;
+
       if (!accountId) {
         const { data: created, error } = await supabase
           .from("accounts")
