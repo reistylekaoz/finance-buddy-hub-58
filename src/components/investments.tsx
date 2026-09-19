@@ -62,15 +62,16 @@ function movementLabel(type: string): string {
   return MOVEMENT_LABELS[type] ?? type;
 }
 
-// Investimentos e movimentações trazidos pela Pluggy sempre têm o id
-// externo preenchido; os lançados manualmente, não — é isso que decide se
-// mostra os botões de editar/excluir (dado sincronizado é sobrescrito no
-// próximo sync, não faz sentido editar por aqui).
+// pluggy_investment_id/external_id são obrigatórios e únicos no banco —
+// investimentos/movimentações lançados na mão ganham um valor sintético com
+// esse prefixo em vez de vir da Pluggy. É isso que decide se mostra os
+// botões de editar/excluir (dado sincronizado é sobrescrito no próximo
+// sync, não faz sentido editar por aqui).
 function isManualInvestment(investment: Investment): boolean {
-  return !investment.pluggy_investment_id;
+  return investment.pluggy_investment_id.startsWith("manual:");
 }
 function isManualMovement(tx: InvestmentTransaction): boolean {
-  return !tx.external_id;
+  return tx.external_id.startsWith("manual:");
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

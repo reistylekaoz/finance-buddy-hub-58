@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileUp, Loader2, Upload } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
@@ -237,10 +238,16 @@ export function StatementImport({
     return next;
   }
 
+  const fieldLabel = (field: "category_id" | "cost_center_id") =>
+    field === "category_id" ? "Categoria" : "Centro de custo";
+
   // Aplica só nas linhas marcadas com a caixinha (a lista inteira pode ter
   // centenas de itens espalhados por várias páginas — a seleção continua
-  // marcada ao trocar de página).
+  // marcada ao trocar de página). Sem toast, esse clique não tinha nenhuma
+  // confirmação visível (o valor só aparece no combobox de cada linha), o
+  // que passava a impressão de que não tinha feito nada.
   function applyAllBank(field: "category_id" | "cost_center_id", value: string) {
+    let applied = 0;
     setBankEdits((current) => {
       const next = { ...current };
       for (const row of pendingBankTransactions) {
@@ -249,19 +256,38 @@ export function StatementImport({
         // própria (herdam da provisão), então ficam de fora do "aplicar aos selecionados".
         if ((current[row.id] ?? emptyEdit).reconcile_with) continue;
         next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+        applied += 1;
       }
       return next;
     });
+    if (applied) {
+      toast.success(
+        `${fieldLabel(field)} aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`,
+      );
+    } else {
+      toast.error(
+        "Nenhum lançamento selecionado recebeu a alteração (os marcados para conciliar usam a categoria da provisão).",
+      );
+    }
   }
   function applyAllCards(field: "category_id" | "cost_center_id", value: string) {
+    let applied = 0;
     setCardEdits((current) => {
       const next = { ...current };
       for (const row of pendingCardTxs) {
         if (!selectedCardIds.has(row.id)) continue;
         next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+        applied += 1;
       }
       return next;
     });
+    if (applied) {
+      toast.success(
+        `${fieldLabel(field)} aplicado a ${applied} compra${applied === 1 ? "" : "s"}.`,
+      );
+    } else {
+      toast.error("Nenhuma compra selecionada.");
+    }
   }
 
   async function loadPendingCards() {
@@ -354,8 +380,17 @@ export function StatementImport({
 
   const patch = (key: string, next: Partial<ParsedRow>) =>
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...next } : row)));
-  const applyAll = (field: "category_id" | "cost_center_id", value: string) =>
+  const applyAll = (field: "category_id" | "cost_center_id", value: string) => {
+    const applied = rows.filter((row) => row.selected).length;
     setRows((current) => current.map((row) => (row.selected ? { ...row, [field]: value } : row)));
+    if (applied) {
+      toast.success(
+        `${fieldLabel(field)} aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`,
+      );
+    } else {
+      toast.error("Nenhum lançamento selecionado.");
+    }
+  };
 
   const candidatePool = useMemo(
     () => provisions.filter((p) => p.account_id === accountId && p.transaction_type !== "transfer"),
