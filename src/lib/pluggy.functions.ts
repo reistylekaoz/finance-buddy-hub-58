@@ -914,21 +914,42 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
     ]);
 
     for (const account of orphanedAccounts ?? []) {
+      // Só o que veio do banco é removido; previsões e lançamentos digitados
+      // pelo usuário nessa conta continuam existindo.
       const { error: txError } = await context.supabase
         .from("transactions")
         .delete()
-        .or(`account_id.eq.${account.id},destination_account_id.eq.${account.id}`);
+        .eq("account_id", account.id)
+        .eq("source", "api");
       if (txError) throw new Error(txError.message);
-    }
-    if (orphanedAccounts?.length) {
-      const { error: accountError } = await context.supabase
-        .from("accounts")
-        .delete()
-        .in(
-          "id",
-          orphanedAccounts.map((a) => a.id),
-        );
-      if (accountError) throw new Error(accountError.message);
+
+      const { count } = await context.supabase
+        .from("transactions")
+        .select("id", { count: "exact", head: true })
+        .or(`account_id.eq.${account.id},destination_account_id.eq.${account.id}`);
+
+      if (count && count > 0) {
+        // Sobrou conteúdo do usuário: a conta fica, mas desconectada e com
+        // saldo inicial zerado — o saldo inicial vinha do cálculo feito com o
+        // histórico da conexão, e mantê-lo sem esse histórico faria a conta
+        // exibir um saldo inflado na tela de contas.
+        const { error: keepError } = await context.supabase
+          .from("accounts")
+          .update({ bank_connection_id: null, pluggy_account_id: null, initial_balance: 0 })
+          .eq("id", account.id);
+        if (keepError) throw new Error(keepError.message);
+      } else {
+        const { error: txRestError } = await context.supabase
+          .from("transactions")
+          .delete()
+          .or(`account_id.eq.${account.id},destination_account_id.eq.${account.id}`);
+        if (txRestError) throw new Error(txRestError.message);
+        const { error: accountError } = await context.supabase
+          .from("accounts")
+          .delete()
+          .eq("id", account.id);
+        if (accountError) throw new Error(accountError.message);
+      }
     }
     if (orphanedCards?.length) {
       // credit_card_transactions cai em cascata (ON DELETE CASCADE).
