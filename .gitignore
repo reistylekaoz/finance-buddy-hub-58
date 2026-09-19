@@ -20,6 +20,13 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Variáveis de ambiente locais — nunca comitar (mesmo que hoje só tenha
+# chaves públicas do Supabase, evita que um segredo real entre por engano
+# no futuro). Use .env.example como referência.
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
