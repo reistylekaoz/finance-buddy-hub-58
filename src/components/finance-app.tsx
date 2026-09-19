@@ -16,9 +16,11 @@ import {
   Building2,
   Check,
   CreditCard,
+  Download,
   FileUp,
   ChevronRight,
   CircleDollarSign,
+  HelpCircle,
   Landmark,
   LayoutDashboard,
   Loader2,
@@ -28,6 +30,7 @@ import {
   Plus,
   Send,
   Settings as SettingsIcon,
+  Smartphone,
   Trash2,
   Shapes,
   TrendingUp,
@@ -56,6 +59,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
@@ -63,6 +67,7 @@ import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 
@@ -2106,6 +2111,78 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
+function HelpTip({ text }: { text: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex size-4 flex-none items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+          aria-label="Ajuda"
+        >
+          <HelpCircle className="size-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 text-xs leading-relaxed">{text}</PopoverContent>
+    </Popover>
+  );
+}
+
+function InstallAppSection() {
+  const { installed, canPromptInstall, promptInstall } = useInstallPrompt();
+  const [showSteps, setShowSteps] = useState(false);
+
+  async function handleClick() {
+    if (canPromptInstall) {
+      await promptInstall();
+      return;
+    }
+    setShowSteps((current) => !current);
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <Smartphone className="size-6 flex-none text-primary" />
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold">Instalar no celular</h2>
+          <p className="text-xs text-muted-foreground">
+            {installed
+              ? "Você já está usando o Fluxora como app no celular. 🎉"
+              : "Adicione o Fluxora na tela inicial do seu iPhone ou Android — abre em tela cheia, como um app de verdade."}
+          </p>
+        </div>
+        {!installed && (
+          <Button variant="outline" onClick={() => void handleClick()}>
+            <Download />
+            Instalar app
+          </Button>
+        )}
+      </div>
+      {showSteps && !installed && (
+        <div className="mt-4 grid gap-4 border-t border-border pt-4 text-sm sm:grid-cols-2">
+          <div>
+            <p className="font-medium">📱 iPhone (Safari)</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>Toque no ícone de Compartilhar (o quadrado com a seta pra cima).</li>
+              <li>Escolha "Adicionar à Tela de Início".</li>
+              <li>Toque em "Adicionar".</li>
+            </ol>
+          </div>
+          <div>
+            <p className="font-medium">🤖 Android (Chrome)</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+              <li>Toque no menu (os três pontinhos, no canto superior).</li>
+              <li>Escolha "Instalar app" ou "Adicionar à tela inicial".</li>
+              <li>Confirme.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Settings({ accounts }: { accounts: Account[] }) {
   const [recipients, setRecipients] = useState<TelegramRecipientRow[]>([]);
   const [cards, setCards] = useState<{ id: string; name: string }[]>([]);
@@ -2200,6 +2277,8 @@ function Settings({ accounts }: { accounts: Account[] }) {
 
   return (
     <div className="space-y-4">
+      <InstallAppSection />
+
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="flex items-center gap-3">
           <Send className="size-6 text-primary" />
@@ -2207,12 +2286,21 @@ function Settings({ accounts }: { accounts: Account[] }) {
             <h2 className="font-semibold">Notificações por Telegram</h2>
             <p className="text-xs text-muted-foreground">
               Cadastre um perfil por pessoa que deve receber os gastos detectados automaticamente —
-              cada um escolhe a frequência e quais contas/cartões acompanha. Depois de criar, copie
-              o link de convite e mande pra essa pessoa por qualquer canal (WhatsApp, SMS etc.) —
-              ela só toca no link pra vincular, sem precisar digitar nada.
+              cada um escolhe a frequência e quais contas/cartões acompanha.
             </p>
           </div>
         </div>
+
+        <ol className="mt-4 list-decimal space-y-1 rounded-md bg-muted/50 p-3 pl-8 text-xs text-muted-foreground">
+          <li>Preencha o nome da pessoa abaixo e clique em "Adicionar perfil".</li>
+          <li>Copie o link de convite que aparece no perfil recém-criado.</li>
+          <li>Mande esse link pra pessoa por WhatsApp, SMS ou qualquer outro app.</li>
+          <li>Ela toca no link — o Telegram abre sozinho e já manda a mensagem inicial.</li>
+          <li>
+            Pronto: o perfil vira "✅ vinculado" e ela passa a receber os relatórios conforme a
+            frequência escolhida.
+          </li>
+        </ol>
 
         <div className="mt-4 space-y-3">
           {recipients.map((recipient) => (
@@ -2235,7 +2323,10 @@ function Settings({ accounts }: { accounts: Account[] }) {
 
         <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
           <label className="space-y-1.5 text-sm">
-            <span className="text-xs font-medium uppercase text-muted-foreground">Nome</span>
+            <span className="flex items-center gap-1 text-xs font-medium uppercase text-muted-foreground">
+              Nome
+              <HelpTip text="Só um apelido pra você identificar esse perfil na lista, ex.: 'Esposa' ou 'Contador'. Não precisa ser o nome real cadastrado no Telegram." />
+            </span>
             <Input
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
@@ -2243,8 +2334,9 @@ function Settings({ accounts }: { accounts: Account[] }) {
             />
           </label>
           <label className="space-y-1.5 text-sm">
-            <span className="text-xs font-medium uppercase text-muted-foreground">
+            <span className="flex items-center gap-1 text-xs font-medium uppercase text-muted-foreground">
               Usuário no Telegram (opcional)
+              <HelpTip text="Só preencha se preferir vincular manualmente: a pessoa cadastra esse mesmo @usuario no Telegram e manda uma mensagem pro bot. Não é necessário se você for usar o link de convite (mais simples)." />
             </span>
             <Input
               value={newUsername}
@@ -2366,8 +2458,9 @@ function RecipientCard({
       )}
 
       <div className="mt-3">
-        <p className="text-xs font-medium uppercase text-muted-foreground">
+        <p className="flex items-center gap-1 text-xs font-medium uppercase text-muted-foreground">
           Frequência de relatórios financeiros
+          <HelpTip text="Com que frequência essa pessoa recebe os gastos detectados pra categorizar. Dá pra marcar mais de uma: diária avisa todo dia sobre o dia anterior, semanal reúne os últimos 7 dias (toda segunda), mensal reúne o mês anterior inteiro (todo dia 1). O que já foi categorizado numa não aparece de novo na outra." />
         </p>
         <div className="mt-1.5 flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-1.5">
@@ -2401,7 +2494,10 @@ function RecipientCard({
       </div>
 
       <div className="mt-3">
-        <p className="text-xs font-medium uppercase text-muted-foreground">Contas e cartões</p>
+        <p className="flex items-center gap-1 text-xs font-medium uppercase text-muted-foreground">
+          Contas e cartões
+          <HelpTip text="Quais contas e cartões essa pessoa acompanha. Com 'todas as contas', ela recebe e pode categorizar qualquer gasto detectado. Com 'contas específicas', só vê e só categoriza os gastos das contas/cartões marcados abaixo." />
+        </p>
         <div className="mt-1.5 flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-1.5">
             <input
