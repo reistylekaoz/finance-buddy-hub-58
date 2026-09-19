@@ -22,7 +22,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MultiSelectFilter, PeriodFilter, type Period } from "@/components/ui/filters";
+import { MultiSelectFilter, PeriodFilter, SortSelect, type Period } from "@/components/ui/filters";
+import { sortByKey, type SortKey } from "@/lib/sort";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { cn } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -190,6 +191,7 @@ export function CreditCards({
   const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
   const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
   const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+  const [sortKey, setSortKey] = useState<SortKey>("date_desc");
   const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -701,6 +703,7 @@ export function CreditCards({
                   Limpar filtros
                 </Button>
               )}
+              <SortSelect value={sortKey} onChange={setSortKey} />
             </div>
             <Button size="sm" onClick={() => openNewTx(cards[0]!.id)}>
               <Plus />
@@ -796,45 +799,47 @@ export function CreditCards({
                       )}
                     </div>
                     <div className="mt-3 space-y-2">
-                      {group.items
-                        .sort((a, b) => (a.purchase_date < b.purchase_date ? 1 : -1))
-                        .map((tx) => (
-                          <div
-                            key={tx.id}
-                            className="flex items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
-                          >
-                            <input
-                              type="checkbox"
-                              className="size-4 flex-none accent-[var(--primary)]"
-                              checked={selectedTxIds.has(tx.id)}
-                              onChange={(e) => toggleSelectTx(tx.id, e.target.checked)}
-                              aria-label={`Selecionar ${tx.description}`}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate">{tx.description}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {tx.purchase_date.split("-").reverse().join("/")}
-                                {tx.installment_total > 1
-                                  ? ` · parcela ${tx.installment_number}/${tx.installment_total}`
-                                  : ""}
-                                {" · "}
-                                {categoryPath(tx.category_id)}
-                                {tx.cost_center_id ? ` · ${centerName(tx.cost_center_id)}` : ""}
-                              </p>
-                            </div>
-                            <span className="font-mono text-sm tabular-nums text-expense">
-                              {money.format(tx.amount)}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => confirmDeleteTx(tx)}
-                              aria-label="Excluir lançamento"
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
+                      {sortByKey(group.items, sortKey, {
+                        date: (t) => t.purchase_date,
+                        amount: (t) => t.amount,
+                        description: (t) => t.description,
+                      }).map((tx) => (
+                        <div
+                          key={tx.id}
+                          className="flex items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            className="size-4 flex-none accent-[var(--primary)]"
+                            checked={selectedTxIds.has(tx.id)}
+                            onChange={(e) => toggleSelectTx(tx.id, e.target.checked)}
+                            aria-label={`Selecionar ${tx.description}`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate">{tx.description}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {tx.purchase_date.split("-").reverse().join("/")}
+                              {tx.installment_total > 1
+                                ? ` · parcela ${tx.installment_number}/${tx.installment_total}`
+                                : ""}
+                              {" · "}
+                              {categoryPath(tx.category_id)}
+                              {tx.cost_center_id ? ` · ${centerName(tx.cost_center_id)}` : ""}
+                            </p>
                           </div>
-                        ))}
+                          <span className="font-mono text-sm tabular-nums text-expense">
+                            {money.format(tx.amount)}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => confirmDeleteTx(tx)}
+                            aria-label="Excluir lançamento"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );

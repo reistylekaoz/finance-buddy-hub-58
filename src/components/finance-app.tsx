@@ -64,10 +64,12 @@ import {
 import {
   MultiSelectFilter,
   PeriodFilter,
+  SortSelect,
   type Period,
   type PeriodPreset,
 } from "@/components/ui/filters";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
+import { sortByKey, type SortKey } from "@/lib/sort";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -2759,6 +2761,7 @@ function Transactions({
   const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
   const [costCenterIds, setCostCenterIds] = useState<Set<string>>(new Set());
   const [period, setPeriod] = useState<Period>({ from: "", to: "" });
+  const [sortKey, setSortKey] = useState<SortKey>("date_desc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -2804,6 +2807,15 @@ function Transactions({
         return true;
       }),
     [transactions, accountIds, categoryIds, costCenterIds, period],
+  );
+  const sorted = useMemo(
+    () =>
+      sortByKey(filtered, sortKey, {
+        date: (t) => t.transaction_date,
+        amount: (t) => Number(t.amount),
+        description: (t) => t.description,
+      }),
+    [filtered, sortKey],
   );
 
   const hasActiveFilters =
@@ -2911,6 +2923,7 @@ function Transactions({
             Limpar filtros
           </Button>
         )}
+        <SortSelect value={sortKey} onChange={setSortKey} />
       </div>
       {pendingCount > 0 && (
         <p className="text-sm text-muted-foreground">
@@ -2958,7 +2971,7 @@ function Transactions({
           )}
         </div>
         <TransactionRows
-          transactions={filtered}
+          transactions={sorted}
           accounts={accounts}
           categoryPath={categoryPath}
           centerName={centerName}
