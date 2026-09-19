@@ -7,6 +7,20 @@ type Db = SupabaseClient<Database>;
 
 const PLUGGY_BASE_URL = "https://api.pluggy.ai";
 
+// Temporário ("por hora"): integração bancária automática só liberada pro
+// dono da conta (murilovieiracardoso@gmail.com) até os itens de múltiplos
+// usuários/cobrança do roadmap estarem prontos. Remover essa checagem
+// quando abrir a integração pra todo mundo.
+const OWNER_USER_ID = "496dc932-c9eb-447f-a1c9-0c23c8730cbb";
+
+function requireOwner(userId: string) {
+  if (userId !== OWNER_USER_ID) {
+    throw new Error(
+      "A integração bancária automática ainda não está disponível pra todos os usuários — em breve!",
+    );
+  }
+}
+
 type PluggyAccount = {
   id: string;
   type: "BANK" | "CREDIT";
@@ -373,6 +387,7 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { oauthRedirectUrl: string }) => input)
   .handler(async ({ context, data }) => {
+    requireOwner(context.userId);
     const result = await pluggyFetch<{ accessToken: string }>("/connect_token", {
       method: "POST",
       body: JSON.stringify({
@@ -394,6 +409,7 @@ export const registerBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { pluggyItemId: string }) => input)
   .handler(async ({ context, data }) => {
+    requireOwner(context.userId);
     const { data: existing } = await context.supabase
       .from("bank_connections")
       .select("id")
@@ -443,6 +459,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
+    requireOwner(context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
       .select("id, pluggy_item_id, last_synced_at")
@@ -481,6 +498,7 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
+    requireOwner(context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
       .select("id, pluggy_item_id")
