@@ -65,6 +65,7 @@ import {
   MultiSelectFilter,
   PeriodFilter,
   SortSelect,
+  type FilterOption,
   type Period,
   type PeriodPreset,
 } from "@/components/ui/filters";
@@ -92,9 +93,16 @@ type TransactionsFilters = {
   accountIds: Set<string>;
   categoryIds: Set<string>;
   costCenterIds: Set<string>;
+  typeIds: Set<string>;
   period: Period;
   sortKey: SortKey;
 };
+
+const TRANSACTION_TYPE_OPTIONS: FilterOption[] = [
+  { id: "income", label: "Receita" },
+  { id: "expense", label: "Despesa" },
+  { id: "transfer", label: "Transferência" },
+];
 type View =
   | "dashboard"
   | "accounts"
@@ -408,6 +416,7 @@ export function FinanceApp() {
       accountIds?: string[];
       categoryIds?: string[];
       costCenterIds?: string[];
+      typeIds?: string[];
       period?: Period;
       sortKey?: SortKey;
     } | null;
@@ -416,6 +425,7 @@ export function FinanceApp() {
         accountIds: new Set(savedTxFilters.accountIds ?? []),
         categoryIds: new Set(savedTxFilters.categoryIds ?? []),
         costCenterIds: new Set(savedTxFilters.costCenterIds ?? []),
+        typeIds: new Set(savedTxFilters.typeIds ?? []),
         period: savedTxFilters.period ?? { from: "", to: "" },
         sortKey: savedTxFilters.sortKey ?? "date_desc",
       });
@@ -456,6 +466,7 @@ export function FinanceApp() {
     accountIds: new Set(),
     categoryIds: new Set(),
     costCenterIds: new Set(),
+    typeIds: new Set(),
     period: { from: "", to: "" },
     sortKey: "date_desc",
   });
@@ -470,6 +481,7 @@ export function FinanceApp() {
           accountIds: Array.from(next.accountIds),
           categoryIds: Array.from(next.categoryIds),
           costCenterIds: Array.from(next.costCenterIds),
+          typeIds: Array.from(next.typeIds),
           period: next.period,
           sortKey: next.sortKey,
         },
@@ -2820,7 +2832,7 @@ function Transactions({
   filters: TransactionsFilters;
   onFiltersChange: (next: TransactionsFilters) => void;
 }) {
-  const { accountIds, categoryIds, costCenterIds, period, sortKey } = filters;
+  const { accountIds, categoryIds, costCenterIds, typeIds, period, sortKey } = filters;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -2861,11 +2873,12 @@ function Transactions({
           return false;
         if (categoryIds.size && !categoryIds.has(tx.category_id ?? "")) return false;
         if (costCenterIds.size && !costCenterIds.has(tx.cost_center_id ?? "")) return false;
+        if (typeIds.size && !typeIds.has(tx.transaction_type)) return false;
         if (period.from && tx.transaction_date < period.from) return false;
         if (period.to && tx.transaction_date > period.to) return false;
         return true;
       }),
-    [transactions, accountIds, categoryIds, costCenterIds, period],
+    [transactions, accountIds, categoryIds, costCenterIds, typeIds, period],
   );
   const sorted = useMemo(
     () =>
@@ -2882,6 +2895,7 @@ function Transactions({
     accountIds.size > 0 ||
     categoryIds.size > 0 ||
     costCenterIds.size > 0 ||
+    typeIds.size > 0 ||
     !!period.from ||
     !!period.to;
 
@@ -2891,6 +2905,7 @@ function Transactions({
       accountIds: new Set(),
       categoryIds: new Set(),
       costCenterIds: new Set(),
+      typeIds: new Set(),
       period: { from: "", to: "" },
     });
   }
@@ -2959,6 +2974,13 @@ function Transactions({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        <MultiSelectFilter
+          label="Tipo"
+          options={TRANSACTION_TYPE_OPTIONS}
+          selected={typeIds}
+          onChange={(next) => onFiltersChange({ ...filters, typeIds: next })}
+          searchPlaceholder="Buscar tipo…"
+        />
         <MultiSelectFilter
           label="Categoria"
           options={categoryOptions}
