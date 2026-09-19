@@ -480,7 +480,7 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                           {connection.last_synced_at
                             ? `Última sincronização ${new Date(connection.last_synced_at).toLocaleString("pt-BR")}`
                             : "Ainda não sincronizado"}
-                          {" · atualiza automaticamente todo dia à 01:00"}
+                          {" · atualiza automaticamente todo dia às 18:00"}
                         </p>
                         {connection.status_detail && (
                           <p className="mt-0.5 text-xs text-destructive">
