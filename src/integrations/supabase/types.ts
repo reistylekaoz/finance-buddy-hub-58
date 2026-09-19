@@ -369,33 +369,6 @@ export type Database = {
           },
         ]
       }
-      debug_sql_audit: {
-        Row: {
-          created_at: string
-          error_message: string | null
-          id: string
-          query: string
-          row_count: number | null
-          succeeded: boolean
-        }
-        Insert: {
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          query: string
-          row_count?: number | null
-          succeeded: boolean
-        }
-        Update: {
-          created_at?: string
-          error_message?: string | null
-          id?: string
-          query?: string
-          row_count?: number | null
-          succeeded?: boolean
-        }
-        Relationships: []
-      }
       exchange_rates: {
         Row: {
           currency: string
@@ -698,17 +671,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      debug_audit_finish: {
-        Args: {
-          _error: string
-          _id: string
-          _row_count: number
-          _succeeded: boolean
-        }
-        Returns: undefined
-      }
-      debug_audit_start: { Args: { _query: string }; Returns: string }
-      debug_readonly_sql: { Args: { query: string }; Returns: Json }
+      [_ in never]: never
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
