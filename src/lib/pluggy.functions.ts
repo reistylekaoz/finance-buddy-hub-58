@@ -354,7 +354,8 @@ export async function syncConnection(
             branch_number: branchNumber,
             account_number: accountNumber,
           })
-          .eq("id", accountId);
+          .eq("id", accountId)
+          .eq("user_id", userId);
       }
       const txs = await fetchAllTransactions(credentials, pAccount.id);
       const rows = txs.map((t) => {
