@@ -2146,11 +2146,16 @@ function Settings({ accounts }: { accounts: Account[] }) {
       label: newLabel.trim(),
       telegram_username: newUsername.trim() ? newUsername.trim().replace(/^@/, "") : null,
     });
-    setAdding(false);
     if (error) {
+      setAdding(false);
       toast.error(error.message);
       return;
     }
+    // Garante que o webhook está registrado sempre que um perfil é salvo —
+    // idempotente (só reaponta pra mesma URL), então não tem risco em
+    // repetir a cada perfil criado.
+    await registerWebhook({ silent: true });
+    setAdding(false);
     setNewLabel("");
     setNewUsername("");
     toast.success("Perfil criado — copie o link de convite abaixo e mande pra essa pessoa.");
@@ -2172,12 +2177,12 @@ function Settings({ accounts }: { accounts: Account[] }) {
     setRecipients((current) => current.filter((r) => r.id !== id));
   }
 
-  async function setupWebhook() {
+  async function registerWebhook({ silent }: { silent: boolean }) {
     setRegistering(true);
     try {
       const { registerTelegramWebhook } = await import("@/lib/telegram.functions");
       const { webhookUrl } = await registerTelegramWebhook();
-      toast.success(`Webhook registrado: ${webhookUrl}`);
+      if (!silent) toast.success(`Webhook registrado: ${webhookUrl}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao registrar o webhook.");
     } finally {
@@ -2254,17 +2259,18 @@ function Settings({ accounts }: { accounts: Account[] }) {
 
         <details className="mt-4 text-sm">
           <summary className="cursor-pointer text-xs text-muted-foreground">
-            Administração (uma vez, após configurar o bot)
+            Administração (avançado)
           </summary>
           <div className="mt-2 space-y-2">
             <p className="text-xs text-muted-foreground">
-              Isso configura o bot inteiro, não cada perfil — clique só uma vez, novos perfis não
-              precisam disso de novo.
+              O webhook do bot é registrado sozinho toda vez que você adiciona um perfil — não
+              precisa clicar aqui no dia a dia. Isso só serve como reforço manual (ex.: se o bot
+              parar de responder).
             </p>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void setupWebhook()}
+              onClick={() => void registerWebhook({ silent: false })}
               disabled={registering}
             >
               {registering ? <Loader2 className="animate-spin" /> : null}Registrar webhook do
