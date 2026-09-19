@@ -249,6 +249,10 @@ export async function syncConnection(
         .from("credit_cards")
         .select("id")
         .eq("pluggy_account_id", pAccount.id)
+        // Sempre limitar ao dono da conexão: o cron roda com o cliente de
+        // serviço (sem RLS) para todos os usuários, e um pluggy_account_id
+        // repetido entre usuários (sandbox) religaria o cartão de outro.
+        .eq("user_id", userId)
         .maybeSingle();
       let cardId = existingCard?.id ?? null;
       if (!cardId) {
@@ -275,7 +279,8 @@ export async function syncConnection(
         await supabase
           .from("credit_cards")
           .update({ bank_connection_id: connection.id })
-          .eq("id", cardId);
+          .eq("id", cardId)
+          .eq("user_id", userId);
       }
       const [txs, closedBillIds] = await Promise.all([
         fetchAllTransactions(credentials, pAccount.id),
@@ -308,6 +313,8 @@ export async function syncConnection(
         .from("accounts")
         .select("id")
         .eq("pluggy_account_id", pAccount.id)
+        // Mesma proteção do cartão: nunca reaproveitar a conta de outro usuário.
+        .eq("user_id", userId)
         .maybeSingle();
       let accountId = existingAccount?.id ?? null;
       const isNewAccount = !accountId;
@@ -354,7 +361,8 @@ export async function syncConnection(
             branch_number: branchNumber,
             account_number: accountNumber,
           })
-          .eq("id", accountId);
+          .eq("id", accountId)
+          .eq("user_id", userId);
       }
       const txs = await fetchAllTransactions(credentials, pAccount.id);
       const rows = txs.map((t) => {
@@ -397,6 +405,7 @@ export async function syncConnection(
             .from("accounts")
             .update({ initial_balance: pAccount.balance - sum })
             .eq("id", accountId)
+            .eq("user_id", userId)
             .eq("pluggy_account_id", pAccount.id);
         }
       }

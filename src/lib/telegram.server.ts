@@ -192,7 +192,15 @@ async function linkByToken(supabase: Db, chatId: string, token: string): Promise
     .maybeSingle();
   if (!data) return null;
 
-  await supabase.from("telegram_recipients").update({ telegram_chat_id: chatId }).eq("id", data.id);
+  // O token é de uso único: depois do vínculo ele é rotacionado, de modo que
+  // um link vazado não permita que terceiros se vinculem à mesma conta.
+  await supabase
+    .from("telegram_recipients")
+    .update({
+      telegram_chat_id: chatId,
+      link_token: crypto.randomUUID().replace(/-/g, ""),
+    })
+    .eq("id", data.id);
   return toRecipient(data);
 }
 
