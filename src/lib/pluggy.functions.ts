@@ -94,6 +94,29 @@ type PluggyItem = {
   connector?: { name: string };
 };
 
+// COE | EQUITY | ETF | FIXED_INCOME | MUTUAL_FUND | SECURITY | OTHER
+type PluggyInvestment = {
+  id: string;
+  name: string;
+  type: string;
+  subtype?: string | null;
+  balance: number;
+  currencyCode?: string;
+  amountOriginal?: number | null;
+  amountProfit?: number | null;
+};
+
+// BUY (aplicação) | SELL (resgate) | TAX | TRANSFER | INTEREST | AMORTIZATION
+type PluggyInvestmentTransaction = {
+  id?: string;
+  type: "BUY" | "SELL" | "TAX" | "TRANSFER" | "INTEREST" | "AMORTIZATION";
+  description?: string | null;
+  amount: number;
+  quantity?: number | null;
+  date: string;
+  tradeDate?: string | null;
+};
+
 // Uma apiKey por clientId (cada usuário tem a sua) — não dá pra usar uma
 // única global como antes, já que cada usuário autentica com credenciais
 // próprias.
@@ -210,6 +233,50 @@ async function fetchClosedBillIds(
   return closed;
 }
 
+// Nem todo conector expõe investimentos (a maioria é só conta corrente) —
+// segue sem investimentos em vez de falhar a sincronização inteira.
+async function fetchAllInvestments(
+  credentials: PluggyCredentials,
+  itemId: string,
+): Promise<PluggyInvestment[]> {
+  const items: PluggyInvestment[] = [];
+  try {
+    let page = 1;
+    for (;;) {
+      const params = new URLSearchParams({ itemId, page: String(page), pageSize: "500" });
+      const data = await pluggyFetch<{ results: PluggyInvestment[]; totalPages: number }>(
+        credentials,
+        `/investments?${params.toString()}`,
+      );
+      items.push(...data.results);
+      if (page >= data.totalPages) break;
+      page += 1;
+    }
+  } catch {
+    // Conector sem suporte a investimentos, ou item ainda sem esse escopo.
+  }
+  return items;
+}
+
+async function fetchInvestmentTransactions(
+  credentials: PluggyCredentials,
+  investmentId: string,
+): Promise<PluggyInvestmentTransaction[]> {
+  const items: PluggyInvestmentTransaction[] = [];
+  let page = 1;
+  for (;;) {
+    const params = new URLSearchParams({ page: String(page), pageSize: "500" });
+    const data = await pluggyFetch<{ results: PluggyInvestmentTransaction[]; totalPages: number }>(
+      credentials,
+      `/investments/${investmentId}/transactions?${params.toString()}`,
+    );
+    items.push(...data.results);
+    if (page >= data.totalPages) break;
+    page += 1;
+  }
+  return items;
+}
+
 export async function createSupportTicket(
   supabase: Db,
   ticket: {
@@ -226,6 +293,85 @@ export async function createSupportTicket(
     bank_connection_id: ticket.bank_connection_id ?? null,
     source: "bank_sync",
   });
+}
+
+const RESGATE_CATEGORY_NAME = "Resgate de investimento";
+// Tolerância pra casar um resgate (SELL) da Pluggy com o lançamento de
+// receita correspondente na conta bancária: mesmo valor (2 casas), data de
+// liquidação até alguns dias depois da data do resgate (TED/PIX pode levar
+// um tempinho pra cair).
+const REDEMPTION_MATCH_WINDOW_DAYS = 5;
+const REDEMPTION_MATCH_AMOUNT_TOLERANCE = 0.01;
+
+function daysBetween(a: string, b: string): number {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round(
+    (new Date(`${a}T12:00:00`).getTime() - new Date(`${b}T12:00:00`).getTime()) / msPerDay,
+  );
+}
+
+async function getOrCreateResgateCategory(supabase: Db, userId: string): Promise<string> {
+  const { data: existing } = await supabase
+    .from("categories")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("category_type", "income")
+    .eq("name", RESGATE_CATEGORY_NAME)
+    .maybeSingle();
+  if (existing?.id) return existing.id;
+  const { data: created, error } = await supabase
+    .from("categories")
+    .insert({ user_id: userId, name: RESGATE_CATEGORY_NAME, category_type: "income" })
+    .select("id")
+    .single();
+  if (error || !created) throw new Error(error?.message ?? "Falha ao criar categoria de resgate.");
+  return created.id;
+}
+
+// Casa resgates (SELL) de investimentos ainda não vinculados com um
+// lançamento de receita "solto" (sem categoria) na conta bancária — mesmo
+// valor, data próxima — e já aplica a categoria "Resgate de investimento"
+// automaticamente. Roda depois de sincronizar investimentos de uma conexão
+// e de novo depois do cron completo (o resgate e o depósito bancário podem
+// estar em conexões diferentes).
+export async function matchInvestmentRedemptions(supabase: Db, userId: string): Promise<void> {
+  const { data: pendingSells } = await supabase
+    .from("investment_transactions")
+    .select("id, amount, trade_date")
+    .eq("user_id", userId)
+    .eq("movement_type", "SELL")
+    .is("matched_transaction_id", null);
+  if (!pendingSells?.length) return;
+
+  const { data: candidates } = await supabase
+    .from("transactions")
+    .select("id, amount, transaction_date")
+    .eq("user_id", userId)
+    .eq("transaction_type", "income")
+    .is("category_id", null);
+  if (!candidates?.length) return;
+
+  const claimed = new Set<string>();
+  let resgateCategoryId: string | null = null;
+  for (const sell of pendingSells) {
+    const match = candidates.find(
+      (c) =>
+        !claimed.has(c.id) &&
+        Math.abs(Number(c.amount) - Number(sell.amount)) <= REDEMPTION_MATCH_AMOUNT_TOLERANCE &&
+        Math.abs(daysBetween(c.transaction_date, sell.trade_date)) <= REDEMPTION_MATCH_WINDOW_DAYS,
+    );
+    if (!match) continue;
+    claimed.add(match.id);
+    resgateCategoryId ??= await getOrCreateResgateCategory(supabase, userId);
+    await supabase
+      .from("investment_transactions")
+      .update({ matched_transaction_id: match.id })
+      .eq("id", sell.id);
+    await supabase
+      .from("transactions")
+      .update({ category_id: resgateCategoryId })
+      .eq("id", match.id);
+  }
 }
 
 export async function syncConnection(
@@ -408,6 +554,77 @@ export async function syncConnection(
         }
       }
     }
+  }
+
+  const pluggyInvestments = await fetchAllInvestments(credentials, connection.pluggy_item_id);
+  for (const pInvestment of pluggyInvestments) {
+    const { data: existingInvestment } = await supabase
+      .from("investments")
+      .select("id")
+      .eq("pluggy_investment_id", pInvestment.id)
+      // Mesma proteção de accounts/credit_cards contra pluggy_investment_id
+      // repetido entre usuários (sandbox).
+      .eq("user_id", userId)
+      .maybeSingle();
+    let investmentId = existingInvestment?.id ?? null;
+    const investmentPayload = {
+      user_id: userId,
+      bank_connection_id: connection.id,
+      pluggy_investment_id: pInvestment.id,
+      name: pInvestment.name,
+      investment_type: pInvestment.type,
+      investment_subtype: pInvestment.subtype ?? null,
+      currency: pInvestment.currencyCode || "BRL",
+      balance: pInvestment.balance,
+      amount_original: pInvestment.amountOriginal ?? null,
+      amount_profit: pInvestment.amountProfit ?? null,
+      last_synced_at: new Date().toISOString(),
+    };
+    if (!investmentId) {
+      const { data: created, error } = await supabase
+        .from("investments")
+        .insert(investmentPayload)
+        .select("id")
+        .single();
+      if (error || !created) throw new Error(error?.message ?? "Falha ao criar investimento.");
+      investmentId = created.id;
+    } else {
+      await supabase
+        .from("investments")
+        .update(investmentPayload)
+        .eq("id", investmentId)
+        .eq("user_id", userId);
+    }
+
+    const invTxs = await fetchInvestmentTransactions(credentials, pInvestment.id).catch(() => []);
+    const invRows = invTxs.map((t) => {
+      const tradeDate = (t.tradeDate ?? t.date).slice(0, 10);
+      // Nem toda movimentação vem com id próprio — cai num identificador
+      // sintético (data+tipo+valor+quantidade) pra manter o upsert idempotente.
+      const externalId = t.id ?? `${tradeDate}:${t.type}:${t.amount}:${t.quantity ?? ""}`;
+      return {
+        user_id: userId,
+        investment_id: investmentId!,
+        movement_type: t.type,
+        description: t.description ?? null,
+        amount: Math.abs(t.amount),
+        quantity: t.quantity ?? null,
+        trade_date: tradeDate,
+        external_id: externalId,
+      };
+    });
+    if (invRows.length) {
+      const { error } = await supabase
+        .from("investment_transactions")
+        .upsert(invRows, { onConflict: "investment_id,external_id" });
+      if (error) throw new Error(error.message);
+    }
+  }
+  try {
+    await matchInvestmentRedemptions(supabase, userId);
+  } catch {
+    // Casamento de resgate é um extra sobre a sincronização em si — uma
+    // falha aqui não deve derrubar o sync de contas/cartões/investimentos.
   }
 
   await supabase

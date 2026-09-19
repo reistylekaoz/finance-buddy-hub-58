@@ -3,6 +3,7 @@ import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
 import {
   createSupportTicket,
   getUserPluggyCredentials,
+  matchInvestmentRedemptions,
   syncConnection,
 } from "@/lib/pluggy.functions";
 import { sendDailyDigests } from "@/lib/telegram.server";
@@ -26,6 +27,7 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
 
   let synced = 0;
   let failed = 0;
+  const syncedUserIds = new Set<string>();
   for (const connection of connections ?? []) {
     try {
       // Cada conexão sincroniza com as credenciais Pluggy do próprio dono
@@ -34,6 +36,7 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
       const credentials = await getUserPluggyCredentials(connection.user_id);
       await syncConnection(supabaseAdmin, connection.user_id, credentials, connection);
       synced += 1;
+      syncedUserIds.add(connection.user_id);
     } catch (syncError) {
       failed += 1;
       const message = syncError instanceof Error ? syncError.message : String(syncError);
@@ -47,6 +50,17 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
         title: "Falha na sincronização automática diária",
         description: message,
       });
+    }
+  }
+
+  // Casa resgates de investimento com depósitos bancários de novo depois de
+  // sincronizar TODAS as conexões do dia — o resgate e o depósito podem
+  // estar em conexões diferentes, sincronizadas em ordens diferentes.
+  for (const userId of syncedUserIds) {
+    try {
+      await matchInvestmentRedemptions(supabaseAdmin, userId);
+    } catch (matchError) {
+      console.error("[investment redemption match]", matchError);
     }
   }
 

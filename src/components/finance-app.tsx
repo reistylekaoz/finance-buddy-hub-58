@@ -30,6 +30,7 @@ import {
   LogOut,
   Menu,
   Pencil,
+  PiggyBank,
   Plus,
   Send,
   Settings as SettingsIcon,
@@ -79,6 +80,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
+import { Investments } from "@/components/investments";
 import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
@@ -92,6 +94,8 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type Investment = Database["public"]["Tables"]["investments"]["Row"];
+type InvestmentTransaction = Database["public"]["Tables"]["investment_transactions"]["Row"];
 type TransactionsFilters = {
   accountIds: Set<string>;
   categoryIds: Set<string>;
@@ -112,6 +116,7 @@ type View =
   | "transactions"
   | "import"
   | "credit_cards"
+  | "investments"
   | "bank_connections"
   | "categories"
   | "cost_centers"
@@ -353,6 +358,7 @@ const nav = [
   { id: "transactions" as const, label: "Lançamentos", icon: ArrowRightLeft },
   { id: "import" as const, label: "Conciliação e extrato", icon: FileUp },
   { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
+  { id: "investments" as const, label: "Investimentos", icon: PiggyBank },
   { id: "bank_connections" as const, label: "Conexões bancárias", icon: Landmark },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
@@ -377,36 +383,53 @@ export function FinanceApp() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
 
   async function load() {
     setLoading(true);
-    const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
-      await Promise.all([
+    const [
+      profile,
+      accountRows,
+      categoryRows,
+      transactionsData,
+      assetRows,
+      centerRows,
+      investmentRows,
+      investmentTxRows,
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("display_name, dashboard_filters, transactions_filters")
+        .maybeSingle(),
+      supabase.from("accounts").select("*").order("created_at"),
+      supabase.from("categories").select("*").order("name"),
+      fetchAllRows<Transaction>((from, to) =>
         supabase
-          .from("profiles")
-          .select("display_name, dashboard_filters, transactions_filters")
-          .maybeSingle(),
-        supabase.from("accounts").select("*").order("created_at"),
-        supabase.from("categories").select("*").order("name"),
-        fetchAllRows<Transaction>((from, to) =>
-          supabase
-            .from("transactions")
-            .select("*")
-            .order("transaction_date", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to),
-        ),
-        supabase.from("assets").select("*").order("created_at", { ascending: false }),
-        supabase.from("cost_centers").select("*").order("name"),
-      ]);
+          .from("transactions")
+          .select("*")
+          .order("transaction_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      supabase.from("assets").select("*").order("created_at", { ascending: false }),
+      supabase.from("cost_centers").select("*").order("name"),
+      supabase.from("investments").select("*").order("name"),
+      supabase
+        .from("investment_transactions")
+        .select("*")
+        .order("trade_date", { ascending: false }),
+    ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
     setCategories(categoryRows.data ?? []);
     setTransactions(transactionsData);
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
+    setInvestments(investmentRows.data ?? []);
+    setInvestmentTransactions(investmentTxRows.data ?? []);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -1045,34 +1068,37 @@ export function FinanceApp() {
                 </h1>
               </div>
             </div>
-            {view !== "import" && view !== "credit_cards" && view !== "bank_connections" && (
-              <Button
-                onClick={() =>
-                  open(
-                    view === "accounts"
-                      ? "account"
-                      : view === "categories"
-                        ? "category"
-                        : view === "assets"
-                          ? "asset"
-                          : view === "cost_centers"
-                            ? "cost_center"
-                            : "transaction",
-                  )
-                }
-              >
-                <Plus />
-                {view === "accounts"
-                  ? "Nova conta"
-                  : view === "categories"
-                    ? "Nova categoria"
-                    : view === "assets"
-                      ? "Novo item"
-                      : view === "cost_centers"
-                        ? "Novo centro de custo"
-                        : "Novo lançamento"}
-              </Button>
-            )}
+            {view !== "import" &&
+              view !== "credit_cards" &&
+              view !== "investments" &&
+              view !== "bank_connections" && (
+                <Button
+                  onClick={() =>
+                    open(
+                      view === "accounts"
+                        ? "account"
+                        : view === "categories"
+                          ? "category"
+                          : view === "assets"
+                            ? "asset"
+                            : view === "cost_centers"
+                              ? "cost_center"
+                              : "transaction",
+                    )
+                  }
+                >
+                  <Plus />
+                  {view === "accounts"
+                    ? "Nova conta"
+                    : view === "categories"
+                      ? "Nova categoria"
+                      : view === "assets"
+                        ? "Novo item"
+                        : view === "cost_centers"
+                          ? "Novo centro de custo"
+                          : "Novo lançamento"}
+                </Button>
+              )}
           </header>
           {loading ? (
             <div className="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">
@@ -1148,6 +1174,12 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   accounts={accounts}
+                />
+              )}
+              {view === "investments" && (
+                <Investments
+                  investments={investments}
+                  investmentTransactions={investmentTransactions}
                 />
               )}
               {view === "bank_connections" && <BankConnections onSynced={load} />}
