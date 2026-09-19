@@ -369,6 +369,27 @@ export type Database = {
           },
         ]
       }
+      exchange_rates: {
+        Row: {
+          currency: string
+          fetched_at: string
+          rate_date: string | null
+          rate_to_brl: number
+        }
+        Insert: {
+          currency: string
+          fetched_at?: string
+          rate_date?: string | null
+          rate_to_brl: number
+        }
+        Update: {
+          currency?: string
+          fetched_at?: string
+          rate_date?: string | null
+          rate_to_brl?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
