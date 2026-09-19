@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
 import { BankConnections } from "@/components/bank-connections";
+import { AccountDataSection } from "@/components/account-data-section";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -2371,6 +2372,8 @@ function Settings({ accounts }: { accounts: Account[] }) {
           </div>
         </details>
       </section>
+
+      <AccountDataSection />
     </div>
   );
 }

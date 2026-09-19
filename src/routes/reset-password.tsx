@@ -43,13 +43,13 @@ function ResetPassword() {
           className="h-auto w-48"
         />
         <h1 className="mt-6 font-display text-2xl font-semibold">Defina uma nova senha</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Use pelo menos 6 caracteres.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Use pelo menos 10 caracteres.</p>
         <div className="mt-6 space-y-1.5">
           <Label>Nova senha</Label>
           <Input
             type="password"
             required
-            minLength={6}
+            minLength={10}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />

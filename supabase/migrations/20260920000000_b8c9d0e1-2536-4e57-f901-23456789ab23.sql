@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS public.telegram_digests (
 
 ALTER TABLE public.telegram_digests ENABLE ROW LEVEL SECURITY;
 
+-- 20260918231232 já criou essas mesmas políticas antes; sem o DROP IF
+-- EXISTS, rodar as duas em sequência quebra com "policy already exists".
+DROP POLICY IF EXISTS "telegram_digests_select_own" ON public.telegram_digests;
+DROP POLICY IF EXISTS "telegram_digests_insert_own" ON public.telegram_digests;
+DROP POLICY IF EXISTS "telegram_digests_update_own" ON public.telegram_digests;
 CREATE POLICY "telegram_digests_select_own" ON public.telegram_digests FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "telegram_digests_insert_own" ON public.telegram_digests FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "telegram_digests_update_own" ON public.telegram_digests FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);

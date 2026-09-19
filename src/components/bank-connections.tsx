@@ -272,8 +272,14 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     if (!pendingDelete) return;
     setDeleting(true);
     try {
-      await deleteBankConnection({ data: { connectionId: pendingDelete.id } });
-      toast.success("Conexão removida.");
+      const result = await deleteBankConnection({ data: { connectionId: pendingDelete.id } });
+      if (result.pluggyRevoked) {
+        toast.success("Conexão removida.");
+      } else {
+        toast.warning(
+          "Conexão removida daqui, mas não foi possível confirmar a revogação do acesso na Pluggy. Se persistir, revogue manualmente no app do seu banco.",
+        );
+      }
       setPendingDelete(null);
       await load();
     } catch (error) {

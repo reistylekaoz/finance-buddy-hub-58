@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { encryptSecret, decryptSecret } from "@/lib/pluggy-crypto.server";
 
 type Db = SupabaseClient<Database>;
 
@@ -26,7 +27,10 @@ export async function getUserPluggyCredentials(
       "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
     );
   }
-  return { clientId: data.pluggy_client_id, clientSecret: data.pluggy_client_secret };
+  return {
+    clientId: data.pluggy_client_id,
+    clientSecret: decryptSecret(data.pluggy_client_secret),
+  };
 }
 
 type PluggyAccount = {
@@ -424,7 +428,7 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
     await getApiKey({ clientId, clientSecret });
     const { error } = await context.supabase
       .from("profiles")
-      .update({ pluggy_client_id: clientId, pluggy_client_secret: clientSecret })
+      .update({ pluggy_client_id: clientId, pluggy_client_secret: encryptSecret(clientSecret) })
       .eq("id", context.userId);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -552,11 +556,21 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
 
-    // TODO(produção): antes de ir pra produção, volte a remover o item do
-    // lado da Pluggy também (pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`,
-    // { method: "DELETE" })). Desligado agora porque, em desenvolvimento,
-    // isso obriga reconectar do zero na Pluggy a cada teste — só queremos
-    // limpar os dados locais.
+    // Revoga o item na Pluggy antes de mexer nos dados locais: "desconectar"
+    // só apaga o registro daqui não revoga de fato o consentimento de Open
+    // Finance concedido ao banco — o item continuava ativo do lado da Pluggy
+    // mesmo com a conexão já removida no app. Não deixa a falha bloquear a
+    // limpeza local (o item pode já ter sido removido, ou a Pluggy pode estar
+    // fora do ar) — só sinaliza pro chamador que a revogação remota pode não
+    // ter acontecido, para avisar o usuário em vez de dar falso positivo.
+    let pluggyRevoked = false;
+    try {
+      const credentials = await getUserPluggyCredentials(context.supabase, context.userId);
+      await pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`, { method: "DELETE" });
+      pluggyRevoked = true;
+    } catch (revokeError) {
+      console.error("[pluggy] falha ao revogar item na desconexão", revokeError);
+    }
 
     // accounts/credit_cards.bank_connection_id é ON DELETE SET NULL (não
     // CASCADE): apagar a conexão sem isso os deixaria órfãos — reaproveitados
@@ -601,5 +615,5 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
       .delete()
       .eq("id", connection.id);
     if (deleteError) throw new Error(deleteError.message);
-    return { ok: true };
+    return { ok: true, pluggyRevoked };
   });
