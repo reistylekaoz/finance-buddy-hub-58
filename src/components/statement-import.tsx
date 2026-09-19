@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, Loader2, Upload } from "lucide-react";
+import { Check, FileUp, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -238,15 +238,25 @@ export function StatementImport({
     return next;
   }
 
-  const fieldLabel = (field: "category_id" | "cost_center_id") =>
-    field === "category_id" ? "Categoria" : "Centro de custo";
+  // Categoria/centro de custo escolhidos na caixa de aplicação em massa só
+  // ficam "de prontidão" — nada é gravado em bankEdits/cardEdits/rows até o
+  // usuário clicar em "Confirmar", em vez de aplicar no instante em que
+  // escolhe cada campo.
+  const [bulkBankCategoryId, setBulkBankCategoryId] = useState("");
+  const [bulkBankCostCenterId, setBulkBankCostCenterId] = useState("");
+  const [bulkCardCategoryId, setBulkCardCategoryId] = useState("");
+  const [bulkCardCostCenterId, setBulkCardCostCenterId] = useState("");
+  const [bulkOfxCategoryId, setBulkOfxCategoryId] = useState("");
+  const [bulkOfxCostCenterId, setBulkOfxCostCenterId] = useState("");
 
   // Aplica só nas linhas marcadas com a caixinha (a lista inteira pode ter
   // centenas de itens espalhados por várias páginas — a seleção continua
-  // marcada ao trocar de página). Sem toast, esse clique não tinha nenhuma
-  // confirmação visível (o valor só aparece no combobox de cada linha), o
-  // que passava a impressão de que não tinha feito nada.
-  function applyAllBank(field: "category_id" | "cost_center_id", value: string) {
+  // marcada ao trocar de página).
+  function confirmBulkBank() {
+    if (!bulkBankCategoryId && !bulkBankCostCenterId) {
+      toast.error("Escolha uma categoria e/ou um centro de custo antes de confirmar.");
+      return;
+    }
     let applied = 0;
     setBankEdits((current) => {
       const next = { ...current };
@@ -255,36 +265,48 @@ export function StatementImport({
         // linhas marcadas pra conciliar com uma provisão não usam categoria
         // própria (herdam da provisão), então ficam de fora do "aplicar aos selecionados".
         if ((current[row.id] ?? emptyEdit).reconcile_with) continue;
-        next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+        next[row.id] = {
+          ...(next[row.id] ?? emptyEdit),
+          ...(bulkBankCategoryId ? { category_id: bulkBankCategoryId } : {}),
+          ...(bulkBankCostCenterId ? { cost_center_id: bulkBankCostCenterId } : {}),
+        };
         applied += 1;
       }
       return next;
     });
     if (applied) {
-      toast.success(
-        `${fieldLabel(field)} aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`,
-      );
+      toast.success(`Aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`);
+      setBulkBankCategoryId("");
+      setBulkBankCostCenterId("");
     } else {
       toast.error(
         "Nenhum lançamento selecionado recebeu a alteração (os marcados para conciliar usam a categoria da provisão).",
       );
     }
   }
-  function applyAllCards(field: "category_id" | "cost_center_id", value: string) {
+  function confirmBulkCards() {
+    if (!bulkCardCategoryId && !bulkCardCostCenterId) {
+      toast.error("Escolha uma categoria e/ou um centro de custo antes de confirmar.");
+      return;
+    }
     let applied = 0;
     setCardEdits((current) => {
       const next = { ...current };
       for (const row of pendingCardTxs) {
         if (!selectedCardIds.has(row.id)) continue;
-        next[row.id] = { ...(next[row.id] ?? emptyEdit), [field]: value };
+        next[row.id] = {
+          ...(next[row.id] ?? emptyEdit),
+          ...(bulkCardCategoryId ? { category_id: bulkCardCategoryId } : {}),
+          ...(bulkCardCostCenterId ? { cost_center_id: bulkCardCostCenterId } : {}),
+        };
         applied += 1;
       }
       return next;
     });
     if (applied) {
-      toast.success(
-        `${fieldLabel(field)} aplicado a ${applied} compra${applied === 1 ? "" : "s"}.`,
-      );
+      toast.success(`Aplicado a ${applied} compra${applied === 1 ? "" : "s"}.`);
+      setBulkCardCategoryId("");
+      setBulkCardCostCenterId("");
     } else {
       toast.error("Nenhuma compra selecionada.");
     }
@@ -380,17 +402,31 @@ export function StatementImport({
 
   const patch = (key: string, next: Partial<ParsedRow>) =>
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...next } : row)));
-  const applyAll = (field: "category_id" | "cost_center_id", value: string) => {
+  function confirmBulkOfx() {
+    if (!bulkOfxCategoryId && !bulkOfxCostCenterId) {
+      toast.error("Escolha uma categoria e/ou um centro de custo antes de confirmar.");
+      return;
+    }
     const applied = rows.filter((row) => row.selected).length;
-    setRows((current) => current.map((row) => (row.selected ? { ...row, [field]: value } : row)));
+    setRows((current) =>
+      current.map((row) =>
+        row.selected
+          ? {
+              ...row,
+              ...(bulkOfxCategoryId ? { category_id: bulkOfxCategoryId } : {}),
+              ...(bulkOfxCostCenterId ? { cost_center_id: bulkOfxCostCenterId } : {}),
+            }
+          : row,
+      ),
+    );
     if (applied) {
-      toast.success(
-        `${fieldLabel(field)} aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`,
-      );
+      toast.success(`Aplicado a ${applied} lançamento${applied === 1 ? "" : "s"}.`);
+      setBulkOfxCategoryId("");
+      setBulkOfxCostCenterId("");
     } else {
       toast.error("Nenhum lançamento selecionado.");
     }
-  };
+  }
 
   const candidatePool = useMemo(
     () => provisions.filter((p) => p.account_id === accountId && p.transaction_type !== "transfer"),
@@ -677,24 +713,33 @@ export function StatementImport({
               <CategoryCombobox
                 categories={categories}
                 categoryPath={categoryPath}
-                value=""
-                onValueChange={(id) => applyAllBank("category_id", id)}
-                placeholder="Aplicar categoria aos selecionados"
+                value={bulkBankCategoryId}
+                onValueChange={setBulkBankCategoryId}
+                placeholder="Categoria para os selecionados"
                 disabled={!selectedBankIds.size}
               />
               <select
                 className={selectClass}
-                defaultValue=""
+                value={bulkBankCostCenterId}
                 disabled={!selectedBankIds.size}
-                onChange={(event) => applyAllBank("cost_center_id", event.target.value)}
+                onChange={(event) => setBulkBankCostCenterId(event.target.value)}
               >
-                <option value="">Aplicar centro de custo aos selecionados</option>
+                <option value="">Centro de custo para os selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
                   </option>
                 ))}
               </select>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={confirmBulkBank}
+                disabled={!selectedBankIds.size || (!bulkBankCategoryId && !bulkBankCostCenterId)}
+              >
+                <Check />
+                Confirmar
+              </Button>
               <Button onClick={() => void savePendingBank()} disabled={pendingBusy}>
                 {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
               </Button>
@@ -867,25 +912,34 @@ export function StatementImport({
               <CategoryCombobox
                 categories={categories}
                 categoryPath={categoryPath}
-                value=""
-                onValueChange={(id) => applyAllCards("category_id", id)}
-                placeholder="Aplicar categoria aos selecionados"
+                value={bulkCardCategoryId}
+                onValueChange={setBulkCardCategoryId}
+                placeholder="Categoria para os selecionados"
                 filter={(category) => category.category_type === "expense"}
                 disabled={!selectedCardIds.size}
               />
               <select
                 className={selectClass}
-                defaultValue=""
+                value={bulkCardCostCenterId}
                 disabled={!selectedCardIds.size}
-                onChange={(event) => applyAllCards("cost_center_id", event.target.value)}
+                onChange={(event) => setBulkCardCostCenterId(event.target.value)}
               >
-                <option value="">Aplicar centro de custo aos selecionados</option>
+                <option value="">Centro de custo para os selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
                   </option>
                 ))}
               </select>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={confirmBulkCards}
+                disabled={!selectedCardIds.size || (!bulkCardCategoryId && !bulkCardCostCenterId)}
+              >
+                <Check />
+                Confirmar
+              </Button>
               <Button onClick={() => void savePendingCards()} disabled={pendingBusy}>
                 {pendingBusy ? <Loader2 className="animate-spin" /> : <FileUp />}Salvar revisão
               </Button>
@@ -1079,24 +1133,33 @@ export function StatementImport({
               <CategoryCombobox
                 categories={categories}
                 categoryPath={categoryPath}
-                value=""
-                onValueChange={(id) => applyAll("category_id", id)}
-                placeholder="Aplicar categoria aos selecionados"
+                value={bulkOfxCategoryId}
+                onValueChange={setBulkOfxCategoryId}
+                placeholder="Categoria para os selecionados"
                 disabled={!totals.count}
               />
               <select
                 className={selectClass}
-                defaultValue=""
+                value={bulkOfxCostCenterId}
                 disabled={!totals.count}
-                onChange={(event) => applyAll("cost_center_id", event.target.value)}
+                onChange={(event) => setBulkOfxCostCenterId(event.target.value)}
               >
-                <option value="">Aplicar centro de custo aos selecionados</option>
+                <option value="">Centro de custo para os selecionados</option>
                 {costCenters.map((center) => (
                   <option key={center.id} value={center.id}>
                     {center.name}
                   </option>
                 ))}
               </select>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={confirmBulkOfx}
+                disabled={!totals.count || (!bulkOfxCategoryId && !bulkOfxCostCenterId)}
+              >
+                <Check />
+                Confirmar
+              </Button>
               <Button onClick={() => void save()} disabled={busy || !totals.count}>
                 {busy ? <Loader2 className="animate-spin" /> : <FileUp />}Importar selecionados
               </Button>
