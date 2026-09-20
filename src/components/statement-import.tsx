@@ -1,10 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, FileUp, Loader2, Upload } from "lucide-react";
+import { Check, ChevronsUpDown, FileUp, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { CategoryCombobox } from "@/components/ui/category-combobox";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Pager } from "@/components/ui/pager";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { triggerClass } from "@/components/ui/filters";
 import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
 import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
@@ -186,6 +196,78 @@ function parseCsv(text: string) {
   return rows;
 }
 
+// Combobox com busca (em vez de <select> nativo) pra escolher a previsão a
+// conciliar: candidatas agora vêm de qualquer conta (uma previsão pode ser
+// executada por uma conta diferente da planejada), então a lista pode ficar
+// grande — buscar digitando o lançamento facilita achar a certa.
+function ProvisionCombobox({
+  provisions,
+  accounts,
+  value,
+  onValueChange,
+  emptyLabel,
+}: {
+  provisions: TransactionRow[];
+  accounts: Account[];
+  value: string;
+  onValueChange: (id: string) => void;
+  emptyLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "";
+  const describe = (p: TransactionRow) =>
+    `${p.description} · prev. ${p.transaction_date.split("-").reverse().join("/")} · ${money.format(p.amount)}${accountName(p.account_id) ? ` · ${accountName(p.account_id)}` : ""}`;
+  const selected = provisions.find((p) => p.id === value);
+  const label = selected ? `Conciliar: ${describe(selected)}` : emptyLabel;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(triggerClass, "w-full justify-between", !value && "text-muted-foreground")}
+        >
+          <span className="truncate">{label}</span>
+          <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(380px,90vw)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar lançamento previsto…" />
+          <CommandList>
+            <CommandEmpty>Nenhuma previsão encontrada.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="__keep__"
+                onSelect={() => {
+                  onValueChange("");
+                  setOpen(false);
+                }}
+              >
+                <Check className={cn("size-4", value ? "opacity-0" : "opacity-100")} />
+                {emptyLabel}
+              </CommandItem>
+              {provisions.map((p) => (
+                <CommandItem
+                  key={p.id}
+                  value={describe(p)}
+                  onSelect={() => {
+                    onValueChange(p.id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("size-4", value === p.id ? "opacity-100" : "opacity-0")} />
+                  <span className="truncate">Conciliar: {describe(p)}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function StatementImport({
   accounts,
   categories,
@@ -284,6 +366,72 @@ export function StatementImport({
       );
     }
   }
+
+  // Extratos bancários às vezes trazem uma transferência entre contas como
+  // duas movimentações pendentes separadas (débito numa conta, crédito na
+  // outra). Selecionando as duas — uma despesa, uma receita, contas
+  // diferentes, mesmo valor — a despesa vira a transferência em si e a
+  // receita duplicada é removida, igual à mesma função em Lançamentos.
+  async function mergeSelectedBankIntoTransfer() {
+    const selected = pendingBankTransactions.filter((t) => selectedBankIds.has(t.id));
+    if (selected.length !== 2) return;
+    const [a, b] = selected;
+    const expenseTx =
+      a!.transaction_type === "expense" ? a! : b!.transaction_type === "expense" ? b! : null;
+    const incomeTx =
+      a!.transaction_type === "income" ? a! : b!.transaction_type === "income" ? b! : null;
+    if (!expenseTx || !incomeTx) {
+      toast.error(
+        "Selecione um lançamento de despesa e um de receita para transformar em transferência.",
+      );
+      return;
+    }
+    if (expenseTx.account_id === incomeTx.account_id) {
+      toast.error("Os dois lançamentos precisam estar em contas diferentes.");
+      return;
+    }
+    if (Math.abs(Number(expenseTx.amount) - Number(incomeTx.amount)) > 0.005) {
+      toast.error("Os dois lançamentos precisam ter o mesmo valor para virarem uma transferência.");
+      return;
+    }
+    setPendingBusy(true);
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        transaction_type: "transfer",
+        destination_account_id: incomeTx.account_id,
+        category_id: null,
+        cost_center_id: null,
+        status: "confirmed",
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", expenseTx.id);
+    if (error) {
+      setPendingBusy(false);
+      toast.error(error.message);
+      return;
+    }
+    const { error: deleteError } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", incomeTx.id);
+    setPendingBusy(false);
+    if (deleteError) {
+      toast.error(
+        `A transferência foi criada, mas não consegui remover o lançamento duplicado: ${deleteError.message}`,
+      );
+    } else {
+      toast.success("Lançamentos combinados em uma transferência.");
+    }
+    setSelectedBankIds(new Set());
+    setBankEdits((current) => {
+      const next = { ...current };
+      delete next[expenseTx.id];
+      delete next[incomeTx.id];
+      return next;
+    });
+    onImported();
+  }
   function confirmBulkCards() {
     if (!bulkCardCategoryId && !bulkCardCostCenterId) {
       toast.error("Escolha uma categoria e/ou um centro de custo antes de confirmar.");
@@ -371,9 +519,9 @@ export function StatementImport({
       const seen = new Set(
         (existing ?? []).map((row: { external_id: string | null }) => row.external_id),
       );
-      const candidatePool = provisions.filter(
-        (p) => p.account_id === accountId && p.transaction_type !== "transfer",
-      );
+      // Não trava na conta prevista: a provisão pode ter sido executada por
+      // outra conta.
+      const candidatePool = provisions.filter((p) => p.transaction_type !== "transfer");
       const guesses = guessReconciliations(parsed, candidatePool);
       setRows(
         parsed.map((row, index) => {
@@ -428,9 +576,11 @@ export function StatementImport({
     }
   }
 
+  // Não trava na conta prevista: a provisão pode ter sido executada por
+  // outra conta.
   const candidatePool = useMemo(
-    () => provisions.filter((p) => p.account_id === accountId && p.transaction_type !== "transfer"),
-    [provisions, accountId],
+    () => provisions.filter((p) => p.transaction_type !== "transfer"),
+    [provisions],
   );
   const candidatesFor = (row: ParsedRow) => {
     const usedElsewhere = new Set(
@@ -487,6 +637,9 @@ export function StatementImport({
         .from("transactions")
         .update({
           status: "confirmed",
+          // A provisão pode ter sido paga por uma conta diferente da
+          // prevista — a conciliação move a previsão pra conta do extrato.
+          account_id: accountId,
           transaction_date: row.date,
           amount: Math.abs(row.amount),
           external_id: row.key,
@@ -517,6 +670,8 @@ export function StatementImport({
     onImported();
   };
 
+  // Não trava na conta prevista: a provisão pode ter sido executada por
+  // outra conta.
   function pendingCandidatesFor(row: TransactionRow): TransactionRow[] {
     const usedElsewhere = new Set(
       Object.entries(bankEdits)
@@ -526,7 +681,6 @@ export function StatementImport({
     );
     return provisions.filter(
       (p) =>
-        p.account_id === row.account_id &&
         p.transaction_type === row.transaction_type &&
         (!usedElsewhere.has(p.id) || p.id === (bankEdits[row.id]?.reconcile_with ?? "")),
     );
@@ -548,6 +702,9 @@ export function StatementImport({
           .from("transactions")
           .update({
             status: "confirmed",
+            // A provisão pode ter sido paga por uma conta diferente da
+            // prevista — a conciliação move a previsão pra conta real.
+            account_id: row.account_id,
             transaction_date: row.transaction_date,
             amount: row.amount,
             external_id: row.external_id,
@@ -710,6 +867,16 @@ export function StatementImport({
               <span className="text-xs text-muted-foreground">
                 {selectedBankIds.size} selecionado{selectedBankIds.size === 1 ? "" : "s"}
               </span>
+              {selectedBankIds.size === 2 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pendingBusy}
+                  onClick={() => void mergeSelectedBankIntoTransfer()}
+                >
+                  Transformar em transferência
+                </Button>
+              )}
               <CategoryCombobox
                 categories={categories}
                 categoryPath={categoryPath}
@@ -818,25 +985,18 @@ export function StatementImport({
                   </span>
                   <div className="flex flex-col gap-2">
                     {(candidates.length > 0 || edit.reconcile_with) && (
-                      <select
-                        className={selectClass}
+                      <ProvisionCombobox
+                        provisions={candidates}
+                        accounts={accounts}
                         value={edit.reconcile_with}
-                        onChange={(event) =>
+                        onValueChange={(id) =>
                           setBankEdits((current) => ({
                             ...current,
-                            [row.id]: { ...edit, reconcile_with: event.target.value },
+                            [row.id]: { ...edit, reconcile_with: id },
                           }))
                         }
-                      >
-                        <option value="">Manter lançamento próprio</option>
-                        {candidates.map((provision) => (
-                          <option key={provision.id} value={provision.id}>
-                            Conciliar: {provision.description} · prev.{" "}
-                            {provision.transaction_date.split("-").reverse().join("/")} ·{" "}
-                            {money.format(provision.amount)}
-                          </option>
-                        ))}
-                      </select>
+                        emptyLabel="Manter lançamento próprio"
+                      />
                     )}
                     {matched ? (
                       <p className="text-xs text-muted-foreground">
@@ -1232,20 +1392,13 @@ export function StatementImport({
                   </span>
                   <div className="flex flex-col gap-2">
                     {(candidates.length > 0 || row.reconcile_with) && (
-                      <select
-                        className={selectClass}
+                      <ProvisionCombobox
+                        provisions={candidates}
+                        accounts={accounts}
                         value={row.reconcile_with}
-                        onChange={(event) => patch(row.key, { reconcile_with: event.target.value })}
-                      >
-                        <option value="">Criar novo lançamento</option>
-                        {candidates.map((provision) => (
-                          <option key={provision.id} value={provision.id}>
-                            Conciliar: {provision.description} · prev.{" "}
-                            {provision.transaction_date.split("-").reverse().join("/")} ·{" "}
-                            {money.format(provision.amount)}
-                          </option>
-                        ))}
-                      </select>
+                        onValueChange={(id) => patch(row.key, { reconcile_with: id })}
+                        emptyLabel="Criar novo lançamento"
+                      />
                     )}
                     {matched ? (
                       <p className="text-xs text-muted-foreground">
