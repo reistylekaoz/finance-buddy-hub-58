@@ -454,7 +454,6 @@ export async function syncConnection(
         if (error) throw new Error(error.message);
         importedCount += rows.length;
       }
-
     } else {
       const { data: existingAccount } = await supabase
         .from("accounts")
@@ -583,7 +582,6 @@ export async function syncConnection(
           if (error) throw new Error(error.message);
         }
         importedCount += newRows.length;
-
 
         // O histórico disponível na Pluggy não cobre a vida toda da conta;
         // ajustamos o saldo inicial para o saldo calculado bater com o saldo
