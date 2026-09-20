@@ -427,9 +427,15 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
         await sendTelegramMessage(chatId, `🎙️ Entendi: "${transcript}"\n\n${reply}`);
       } catch (voiceError) {
         console.error("[telegram voice]", voiceError);
+        // Antes essa mensagem era sempre genérica e escondia se o problema
+        // foi na transcrição (Groq) ou na interpretação (Anthropic) — os
+        // dois lançam erro com uma mensagem já pensada pra ser lida pelo
+        // usuário (nunca inclui a chave em si, só o nome da variável que
+        // falta), então mostrar direto ajuda a identificar a causa real.
+        const detail = voiceError instanceof Error ? voiceError.message : String(voiceError);
         await sendTelegramMessage(
           chatId,
-          "Não consegui processar esse áudio agora — pode tentar de novo ou escrever a categorização em texto?",
+          `Não consegui processar esse áudio agora: ${detail}\n\nPode tentar de novo ou escrever a categorização em texto?`,
         );
       }
       return new Response("ok", { status: 200 });
@@ -447,10 +453,8 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
     );
   } catch (error) {
     console.error("[telegram webhook]", error);
-    await sendTelegramMessage(
-      chatId,
-      "Deu um erro por aqui — já registrei pra dar uma olhada.",
-    ).catch(() => undefined);
+    const detail = error instanceof Error ? error.message : String(error);
+    await sendTelegramMessage(chatId, `Deu um erro por aqui: ${detail}`).catch(() => undefined);
   }
   return new Response("ok", { status: 200 });
 }
