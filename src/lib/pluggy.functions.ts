@@ -446,12 +446,15 @@ export async function syncConnection(
           external_id: t.id,
         }));
       if (rows.length) {
+        // Igual às contas: só acrescenta compras novas. Regravar as
+        // existentes desfazia categoria/centro de custo já revisados.
         const { error } = await supabase
           .from("credit_card_transactions")
-          .upsert(rows, { onConflict: "card_id,external_id" });
+          .upsert(rows, { onConflict: "card_id,external_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
         importedCount += rows.length;
       }
+
     } else {
       const { data: existingAccount } = await supabase
         .from("accounts")
