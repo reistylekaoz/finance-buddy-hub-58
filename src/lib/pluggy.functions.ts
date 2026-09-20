@@ -446,12 +446,15 @@ export async function syncConnection(
           external_id: t.id,
         }));
       if (rows.length) {
+        // Igual às contas: só acrescenta compras novas. Regravar as
+        // existentes desfazia categoria/centro de custo já revisados.
         const { error } = await supabase
           .from("credit_card_transactions")
-          .upsert(rows, { onConflict: "card_id,external_id" });
+          .upsert(rows, { onConflict: "card_id,external_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
         importedCount += rows.length;
       }
+
     } else {
       const { data: existingAccount } = await supabase
         .from("accounts")
@@ -554,33 +557,33 @@ export async function syncConnection(
         };
       });
       if (rows.length) {
-        // Se o usuário já reclassificou um lançamento importado como
-        // transferência, ele tem conta de destino preenchida. Sobrescrever só
-        // o tipo (income/expense) deixaria a linha inconsistente e o banco
-        // recusa (transactions_check), então preservamos essas linhas.
-        const transferIds = new Set<string>();
+        // A sincronização só ACRESCENTA o que ainda não existe. Regravar o
+        // histórico inteiro a cada dia desfazia o trabalho do usuário:
+        // lançamentos já revisados/conciliados (reclassificados como
+        // transferência, com categoria ajustada, ou previsões que receberam
+        // o external_id ao serem conciliadas) voltavam para a fila de
+        // conciliação com os dados originais do banco.
+        const knownIds = new Set<string>();
         for (let i = 0; i < rows.length; i += 500) {
           const slice = rows.slice(i, i + 500).map((r) => r.external_id);
           const { data: existing } = await supabase
             .from("transactions")
             .select("external_id")
             .eq("user_id", userId)
-            .eq("transaction_type", "transfer")
             .in("external_id", slice);
           for (const row of existing ?? []) {
-            if (row.external_id) transferIds.add(row.external_id);
+            if (row.external_id) knownIds.add(row.external_id);
           }
         }
-        const upsertRows = rows
-          .filter((r) => !transferIds.has(r.external_id))
-          .map((r) => ({ ...r, destination_account_id: null }));
-        if (upsertRows.length) {
+        const newRows = rows.filter((r) => !knownIds.has(r.external_id));
+        if (newRows.length) {
           const { error } = await supabase
             .from("transactions")
-            .upsert(upsertRows, { onConflict: "user_id,external_id" });
+            .upsert(newRows, { onConflict: "user_id,external_id", ignoreDuplicates: true });
           if (error) throw new Error(error.message);
         }
-        importedCount += upsertRows.length;
+        importedCount += newRows.length;
+
 
         // O histórico disponível na Pluggy não cobre a vida toda da conta;
         // ajustamos o saldo inicial para o saldo calculado bater com o saldo
