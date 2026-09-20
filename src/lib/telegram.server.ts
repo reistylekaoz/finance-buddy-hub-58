@@ -35,6 +35,42 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
   await telegramFetch("sendMessage", { chat_id: chatId, text });
 }
 
+type InlineButton = { text: string; callback_data: string };
+
+function chunkRows<T>(items: T[], perRow: number): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += perRow) rows.push(items.slice(i, i + perRow));
+  return rows;
+}
+
+// Prefixo curto do uuid — só precisa ser único dentro da lista de itens,
+// categorias ou centros de custo do próprio usuário no momento em que os
+// botões aparecem. É o suficiente pra caber no limite de 64 bytes do
+// callback_data dos botões do Telegram sem precisar guardar estado extra
+// no banco (os ids completos são resolvidos de novo, por prefixo, quando o
+// botão é tocado).
+function shortId(id: string): string {
+  return id.replace(/-/g, "").slice(0, 8);
+}
+
+async function sendTelegramKeyboard(
+  chatId: string,
+  text: string,
+  buttons: InlineButton[][],
+): Promise<void> {
+  await telegramFetch("sendMessage", {
+    chat_id: chatId,
+    text,
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+// Precisa ser chamada pra todo callback_query, mesmo quando a ação não deu
+// em nada — sem isso o botão fica "carregando" pro usuário indefinidamente.
+async function answerCallbackQuery(callbackQueryId: string): Promise<void> {
+  await telegramFetch("answerCallbackQuery", { callback_query_id: callbackQueryId });
+}
+
 export async function setTelegramWebhook(webhookUrl: string): Promise<void> {
   await telegramFetch("setWebhook", { url: webhookUrl });
 }
@@ -99,6 +135,12 @@ type TelegramUpdate = {
     from?: { username?: string };
     text?: string;
     voice?: { file_id: string };
+  };
+  callback_query?: {
+    id: string;
+    data?: string;
+    from?: { username?: string };
+    message?: { chat: { id: number | string } };
   };
 };
 
@@ -253,6 +295,210 @@ async function fetchPendingItems(supabase: Db, userId: string, ids: Record<strin
   return items;
 }
 
+async function fetchLatestPendingItems(
+  supabase: Db,
+  recipient: Recipient,
+): Promise<{ digestId: string; items: PendingItem[] } | null> {
+  const { data: digest } = await supabase
+    .from("telegram_digests")
+    .select("id, transaction_ids, card_transaction_ids")
+    .eq("recipient_id", recipient.id)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!digest) return null;
+  const items = await fetchPendingItems(supabase, recipient.user_id, digest);
+  return { digestId: digest.id, items };
+}
+
+async function applyCategorization(
+  supabase: Db,
+  item: PendingItem,
+  categoryId: string,
+  costCenterId: string | null,
+): Promise<void> {
+  const table = item.kind === "bank" ? "transactions" : "credit_card_transactions";
+  await supabase
+    .from(table)
+    .update({
+      category_id: categoryId,
+      cost_center_id: costCenterId,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", item.id);
+}
+
+// Reconsulta o que ainda está pendente nesse dígest (reviewed_at IS NULL) e,
+// se não sobrou nada, marca como resolvido — chamado depois de cada
+// categorização manual (por botão) pra manter o mesmo comportamento da
+// categorização por texto/voz.
+async function markDigestResolvedIfDone(
+  supabase: Db,
+  recipient: Recipient,
+  digestId: string,
+): Promise<void> {
+  const { data: digest } = await supabase
+    .from("telegram_digests")
+    .select("id, transaction_ids, card_transaction_ids")
+    .eq("id", digestId)
+    .maybeSingle();
+  if (!digest) return;
+  const stillPending = await fetchPendingItems(supabase, recipient.user_id, digest);
+  if (!stillPending.length) {
+    await supabase
+      .from("telegram_digests")
+      .update({ resolved_at: new Date().toISOString() })
+      .eq("id", digest.id);
+  }
+}
+
+async function sendItemCategoryButtons(
+  chatId: string,
+  item: PendingItem,
+  categories: CategoryOption[],
+): Promise<void> {
+  const relevant = categories.filter((c) => c.category_type === item.transaction_type);
+  if (!relevant.length) {
+    await sendTelegramMessage(
+      chatId,
+      `${item.label}: nenhuma categoria de ${item.transaction_type === "income" ? "receita" : "despesa"} cadastrada no app.`,
+    );
+    return;
+  }
+  const kindChar = item.kind === "bank" ? "b" : "c";
+  const buttons = chunkRows(
+    relevant.map((c) => ({
+      text: c.name,
+      callback_data: `cat:${kindChar}:${shortId(item.id)}:${shortId(c.id)}`,
+    })),
+    2,
+  );
+  await sendTelegramKeyboard(chatId, `${item.label}\nEscolha a categoria:`, buttons);
+}
+
+// Botão "Categorizar manualmente": manda uma mensagem por lançamento
+// pendente com os botões de categoria, um de cada vez.
+async function sendManualCategorization(
+  supabase: Db,
+  recipient: Recipient,
+  chatId: string,
+): Promise<void> {
+  const pending = await fetchLatestPendingItems(supabase, recipient);
+  if (!pending || !pending.items.length) {
+    await sendTelegramMessage(chatId, "Não tem nada pendente de categorização agora. 👍");
+    return;
+  }
+  const { data: categoryRows } = await supabase
+    .from("categories")
+    .select("id, name, category_type")
+    .eq("user_id", recipient.user_id);
+  const categories = categoryRows ?? [];
+  if (!categories.length) {
+    await sendTelegramMessage(
+      chatId,
+      "Você ainda não tem categorias cadastradas no app — crie ao menos uma antes de categorizar por aqui.",
+    );
+    return;
+  }
+  await sendTelegramMessage(
+    chatId,
+    `Vamos categorizar ${pending.items.length} lançamento${pending.items.length === 1 ? "" : "s"} um por um:`,
+  );
+  for (const item of pending.items) {
+    await sendItemCategoryButtons(chatId, item, categories);
+  }
+}
+
+// Depois de tocar numa categoria: se o usuário tem centros de custo
+// cadastrados, pergunta qual deles antes de gravar; senão, categoriza
+// direto (não dá pra exigir escolher de uma lista vazia).
+async function handleCategoryChoice(
+  supabase: Db,
+  recipient: Recipient,
+  chatId: string,
+  kindChar: string,
+  itemShort: string,
+  catShort: string,
+): Promise<void> {
+  const pending = await fetchLatestPendingItems(supabase, recipient);
+  const item = pending?.items.find((i) => i.kind[0] === kindChar && shortId(i.id) === itemShort);
+  if (!pending || !item) {
+    await sendTelegramMessage(
+      chatId,
+      "Esse lançamento não está mais pendente (talvez já tenha sido categorizado).",
+    );
+    return;
+  }
+  const { data: categoryRows } = await supabase
+    .from("categories")
+    .select("id, name, category_type")
+    .eq("user_id", recipient.user_id);
+  const category = (categoryRows ?? []).find((c) => shortId(c.id) === catShort);
+  if (!category) {
+    await sendTelegramMessage(chatId, "Não encontrei essa categoria — tenta de novo.");
+    return;
+  }
+  const { data: costCenterRows } = await supabase
+    .from("cost_centers")
+    .select("id, name")
+    .eq("user_id", recipient.user_id);
+  const costCenters = costCenterRows ?? [];
+  if (!costCenters.length) {
+    await applyCategorization(supabase, item, category.id, null);
+    await markDigestResolvedIfDone(supabase, recipient, pending.digestId);
+    await sendTelegramMessage(chatId, `✅ ${item.label} → ${category.name}`);
+    return;
+  }
+  const buttons = chunkRows(
+    costCenters.map((cc) => ({
+      text: cc.name,
+      callback_data: `cc:${kindChar}:${itemShort}:${catShort}:${shortId(cc.id)}`,
+    })),
+    2,
+  );
+  await sendTelegramKeyboard(
+    chatId,
+    `${item.label}\nCategoria: ${category.name} ✅\nAgora o centro de custo:`,
+    buttons,
+  );
+}
+
+async function handleCostCenterChoice(
+  supabase: Db,
+  recipient: Recipient,
+  chatId: string,
+  kindChar: string,
+  itemShort: string,
+  catShort: string,
+  ccShort: string,
+): Promise<void> {
+  const pending = await fetchLatestPendingItems(supabase, recipient);
+  const item = pending?.items.find((i) => i.kind[0] === kindChar && shortId(i.id) === itemShort);
+  if (!pending || !item) {
+    await sendTelegramMessage(
+      chatId,
+      "Esse lançamento não está mais pendente (talvez já tenha sido categorizado).",
+    );
+    return;
+  }
+  const [{ data: categoryRows }, { data: costCenterRows }] = await Promise.all([
+    supabase.from("categories").select("id, name, category_type").eq("user_id", recipient.user_id),
+    supabase.from("cost_centers").select("id, name").eq("user_id", recipient.user_id),
+  ]);
+  const category = (categoryRows ?? []).find((c) => shortId(c.id) === catShort);
+  const costCenter = (costCenterRows ?? []).find((cc) => shortId(cc.id) === ccShort);
+  if (!category || !costCenter) {
+    await sendTelegramMessage(
+      chatId,
+      "Não encontrei a categoria ou o centro de custo — tenta de novo.",
+    );
+    return;
+  }
+  await applyCategorization(supabase, item, category.id, costCenter.id);
+  await markDigestResolvedIfDone(supabase, recipient, pending.digestId);
+  await sendTelegramMessage(chatId, `✅ ${item.label} → ${category.name} / ${costCenter.name}`);
+}
+
 function money(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
@@ -317,25 +563,32 @@ async function interpretCategorization(
   return result;
 }
 
+// Interpreta a categorização por texto/voz e já manda a resposta pro chat.
+// `prefix` é usado pelo fluxo de voz pra prefixar com a transcrição
+// ("🎙️ Entendi: ..."). Para os lançamentos que a IA não conseguiu
+// identificar com confiança, manda os botões de categoria na hora — em vez
+// de só pedir pra descrever de novo — pra sempre ter uma saída manual.
 async function handleCategorizationReply(
   supabase: Db,
   recipient: Recipient,
+  chatId: string,
   text: string,
-): Promise<string> {
-  const { data: digest } = await supabase
-    .from("telegram_digests")
-    .select("id, transaction_ids, card_transaction_ids")
-    .eq("recipient_id", recipient.id)
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!digest) {
-    return "Não tem nada pendente de categorização agora. Assim que eu detectar novos gastos, aviso por aqui.";
+  prefix: string,
+): Promise<void> {
+  const pending = await fetchLatestPendingItems(supabase, recipient);
+  if (!pending) {
+    await sendTelegramMessage(
+      chatId,
+      `${prefix}Não tem nada pendente de categorização agora. Assim que eu detectar novos gastos, aviso por aqui.`,
+    );
+    return;
   }
-
-  const items = await fetchPendingItems(supabase, recipient.user_id, digest);
-  if (!items.length) {
-    return "Já está tudo revisado, nada pendente no momento. 👍";
+  if (!pending.items.length) {
+    await sendTelegramMessage(
+      chatId,
+      `${prefix}Já está tudo revisado, nada pendente no momento. 👍`,
+    );
+    return;
   }
 
   const { data: categoryRows } = await supabase
@@ -344,18 +597,22 @@ async function handleCategorizationReply(
     .eq("user_id", recipient.user_id);
   const categories = categoryRows ?? [];
   if (!categories.length) {
-    return "Você ainda não tem categorias cadastradas no app — crie ao menos uma antes de categorizar por aqui.";
+    await sendTelegramMessage(
+      chatId,
+      `${prefix}Você ainda não tem categorias cadastradas no app — crie ao menos uma antes de categorizar por aqui.`,
+    );
+    return;
   }
 
-  const mapping = await interpretCategorization(items, categories, text);
+  const mapping = await interpretCategorization(pending.items, categories, text);
 
   const resolved: string[] = [];
-  const unresolved: string[] = [];
-  for (const item of items) {
+  const unresolvedItems: PendingItem[] = [];
+  for (const item of pending.items) {
     const categoryId = mapping.get(item.id);
     const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
     if (!category) {
-      unresolved.push(item.label);
+      unresolvedItems.push(item);
       continue;
     }
     const table = item.kind === "bank" ? "transactions" : "credit_card_transactions";
@@ -366,20 +623,90 @@ async function handleCategorizationReply(
     resolved.push(`${item.label} → ${category.name}`);
   }
 
-  if (!unresolved.length) {
+  if (!unresolvedItems.length) {
     await supabase
       .from("telegram_digests")
       .update({ resolved_at: new Date().toISOString() })
-      .eq("id", digest.id);
+      .eq("id", pending.digestId);
   }
 
   const parts: string[] = [];
   if (resolved.length) parts.push(`Categorizei:\n${resolved.map((r) => `✅ ${r}`).join("\n")}`);
-  if (unresolved.length)
+  if (unresolvedItems.length)
     parts.push(
-      `Não entendi a categoria destes:\n${unresolved.map((r) => `❓ ${r}`).join("\n")}\nPode descrever de novo?`,
+      `Não consegui identificar a categoria de ${unresolvedItems.length} lançamento${unresolvedItems.length === 1 ? "" : "s"} — escolha pelos botões abaixo:`,
     );
-  return parts.join("\n\n");
+  await sendTelegramMessage(chatId, prefix + (parts.join("\n\n") || "Nada processado."));
+  for (const item of unresolvedItems) {
+    await sendItemCategoryButtons(chatId, item, categories);
+  }
+}
+
+// Botões mostrados sempre que o bot não consegue identificar o comando de
+// voz (áudio vazio/incompreensível ou erro no processamento) — em vez de só
+// pedir pra tentar de novo, oferece a categorização manual por botão como
+// alternativa.
+const VOICE_FAILURE_BUTTONS: InlineButton[][] = [
+  [
+    { text: "🔁 Tentar de novo", callback_data: "voice:retry" },
+    { text: "☑️ Categorizar manualmente", callback_data: "voice:manual" },
+  ],
+];
+
+async function handleCallbackQuery(
+  supabase: Db,
+  callbackQuery: NonNullable<TelegramUpdate["callback_query"]>,
+): Promise<void> {
+  try {
+    await answerCallbackQuery(callbackQuery.id);
+  } catch (ackError) {
+    console.error("[telegram callback ack]", ackError);
+  }
+  const chatId = callbackQuery.message ? String(callbackQuery.message.chat.id) : null;
+  const data = callbackQuery.data ?? "";
+  if (!chatId || !data) return;
+
+  try {
+    const recipient = await findOrLinkRecipient(supabase, chatId, callbackQuery.from?.username);
+    if (!recipient) return;
+
+    if (data === "voice:retry") {
+      await sendTelegramMessage(chatId, "Beleza, pode mandar o áudio de novo quando quiser 🎙️");
+      return;
+    }
+    if (data === "voice:manual") {
+      await sendManualCategorization(supabase, recipient, chatId);
+      return;
+    }
+    const parts = data.split(":");
+    if (parts[0] === "cat" && parts.length === 4) {
+      await handleCategoryChoice(
+        supabase,
+        recipient,
+        chatId,
+        parts[1] ?? "",
+        parts[2] ?? "",
+        parts[3] ?? "",
+      );
+      return;
+    }
+    if (parts[0] === "cc" && parts.length === 5) {
+      await handleCostCenterChoice(
+        supabase,
+        recipient,
+        chatId,
+        parts[1] ?? "",
+        parts[2] ?? "",
+        parts[3] ?? "",
+        parts[4] ?? "",
+      );
+      return;
+    }
+  } catch (error) {
+    console.error("[telegram callback]", error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await sendTelegramMessage(chatId, `Deu um erro por aqui: ${detail}`).catch(() => undefined);
+  }
 }
 
 export async function handleTelegramWebhook(request: Request): Promise<Response> {
@@ -392,6 +719,11 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
   try {
     update = (await request.json()) as TelegramUpdate;
   } catch {
+    return new Response("ok", { status: 200 });
+  }
+
+  if (update.callback_query) {
+    await handleCallbackQuery(supabaseAdmin, update.callback_query);
     return new Response("ok", { status: 200 });
   }
 
@@ -417,14 +749,20 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
         const fileUrl = await getTelegramFileUrl(message.voice.file_id);
         const transcript = await transcribeVoice(fileUrl);
         if (!transcript) {
-          await sendTelegramMessage(
+          await sendTelegramKeyboard(
             chatId,
-            "Não consegui entender esse áudio — pode tentar de novo, falando um pouco mais devagar?",
+            "Não consegui entender esse áudio. O que você quer fazer?",
+            VOICE_FAILURE_BUTTONS,
           );
           return new Response("ok", { status: 200 });
         }
-        const reply = await handleCategorizationReply(supabaseAdmin, recipient, transcript);
-        await sendTelegramMessage(chatId, `🎙️ Entendi: "${transcript}"\n\n${reply}`);
+        await handleCategorizationReply(
+          supabaseAdmin,
+          recipient,
+          chatId,
+          transcript,
+          `🎙️ Entendi: "${transcript}"\n\n`,
+        );
       } catch (voiceError) {
         console.error("[telegram voice]", voiceError);
         // Antes essa mensagem era sempre genérica e escondia se o problema
@@ -433,17 +771,17 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
         // usuário (nunca inclui a chave em si, só o nome da variável que
         // falta), então mostrar direto ajuda a identificar a causa real.
         const detail = voiceError instanceof Error ? voiceError.message : String(voiceError);
-        await sendTelegramMessage(
+        await sendTelegramKeyboard(
           chatId,
-          `Não consegui processar esse áudio agora: ${detail}\n\nPode tentar de novo ou escrever a categorização em texto?`,
+          `Não consegui processar esse áudio agora: ${detail}\n\nO que você quer fazer?`,
+          VOICE_FAILURE_BUTTONS,
         );
       }
       return new Response("ok", { status: 200 });
     }
 
     if (message.text && !message.text.startsWith("/")) {
-      const reply = await handleCategorizationReply(supabaseAdmin, recipient, message.text);
-      await sendTelegramMessage(chatId, reply);
+      await handleCategorizationReply(supabaseAdmin, recipient, chatId, message.text, "");
       return new Response("ok", { status: 200 });
     }
 
