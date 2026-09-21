@@ -722,17 +722,24 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
     // Passar itemId (raiz do corpo, fora de "options") põe o widget em modo
-    // "atualizar item existente" em vez de criar um novo — usado pelo botão
-    // de teste em Conexões bancárias. clientUserId/avoidDuplicates só fazem
-    // sentido no modo de criação.
+    // "atualizar item existente" em vez de criar um novo. IMPORTANTE:
+    // clientUserId/avoidDuplicates continuam indo dentro de "options" mesmo
+    // em modo update — é o próprio exemplo da documentação da Pluggy pra
+    // esse endpoint. Sem isso, reautenticar um item órfão (criado antes de
+    // o clientUserId estar configurado certo, ou por outro caminho como
+    // meu.pluggy.ai) não o associa ao clientUserId desta conta — e todo
+    // "Conectar novo banco" seguinte (modo criação) volta a bater no
+    // ITEM_USER_ALREADY_EXISTS pra essa mesma credencial, porque a Pluggy
+    // continua sem saber que esse item já é "seu".
     const body: Record<string, unknown> = {
       options: {
+        clientUserId: context.userId,
+        avoidDuplicates: true,
         // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
         // um redirecionamento de ida e volta para autorizar o acesso; sem
         // essa URL a Pluggy não sabe pra onde trazer o usuário de volta e
         // o fluxo falha com um erro genérico.
         oauthRedirectUrl: data.oauthRedirectUrl,
-        ...(data.itemId ? {} : { clientUserId: context.userId, avoidDuplicates: true }),
       },
     };
     if (data.itemId) body["itemId"] = data.itemId;
