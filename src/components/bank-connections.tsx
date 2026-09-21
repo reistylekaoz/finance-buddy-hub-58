@@ -72,6 +72,11 @@ type PluggyConnectInstance = { init: () => void };
 type PluggyConnectOptions = {
   connectToken: string;
   includeSandbox?: boolean;
+  // Faz o próprio widget (não só o connect_token) saber que é um modo
+  // atualização — sem isso ele se comporta como "criar item novo" mesmo
+  // com um connect_token pedido em modo update, e ainda esbarra no
+  // ITEM_USER_ALREADY_EXISTS.
+  updateItem?: string;
   onSuccess: (itemData: { item: { id: string } }) => void;
   onError?: (error: unknown) => void;
   onClose?: () => void;
@@ -275,6 +280,10 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
         // Mostra também os conectores de teste da Pluggy; troque para false
         // ao usar credenciais de produção com usuários reais.
         includeSandbox: true,
+        // O próprio widget precisa saber que é atualização, não só o
+        // connect_token — sem isso ele mostra a tela normal de "criar item
+        // novo" mesmo com um token pedido em modo update.
+        ...(itemId ? { updateItem: itemId } : {}),
         onSuccess: (itemData) => {
           void (async () => {
             try {
