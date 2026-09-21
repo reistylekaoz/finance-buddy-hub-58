@@ -721,28 +721,32 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .validator((input: { oauthRedirectUrl: string; itemId?: string }) => input)
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
+    // avoidDuplicates: true fazia a Pluggy VALIDAR as credenciais antes de
+    // sequer abrir o fluxo de autenticação, e recusar de cara com
+    // ITEM_USER_ALREADY_EXISTS quando já existe um item igual — era
+    // literalmente essa flag que travava a reconexão em vez de deixar o
+    // próprio widget negociar isso nativamente com o usuário. Removida:
+    // sem ela, a Pluggy deixa o fluxo normal do widget seguir, que já sabe
+    // lidar com "esse item já existe" sem precisar de um erro pra nosso
+    // código interceptar.
+    //
     // Passar itemId (raiz do corpo, fora de "options") põe o widget em modo
-    // "atualizar item existente" em vez de criar um novo. IMPORTANTE:
-    // clientUserId/avoidDuplicates continuam indo dentro de "options" mesmo
-    // em modo update — é o próprio exemplo da documentação da Pluggy pra
-    // esse endpoint. Sem isso, reautenticar um item órfão (criado antes de
-    // o clientUserId estar configurado certo, ou por outro caminho como
-    // meu.pluggy.ai) não o associa ao clientUserId desta conta — e todo
-    // "Conectar novo banco" seguinte (modo criação) volta a bater no
-    // ITEM_USER_ALREADY_EXISTS pra essa mesma credencial, porque a Pluggy
-    // continua sem saber que esse item já é "seu".
-    const body: Record<string, unknown> = {
-      options: {
-        clientUserId: context.userId,
-        avoidDuplicates: true,
-        // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
-        // um redirecionamento de ida e volta para autorizar o acesso; sem
-        // essa URL a Pluggy não sabe pra onde trazer o usuário de volta e
-        // o fluxo falha com um erro genérico.
-        oauthRedirectUrl: data.oauthRedirectUrl,
-      },
-    };
-    if (data.itemId) body["itemId"] = data.itemId;
+    // "atualizar item existente" em vez de criar um novo.
+    const body: Record<string, unknown> = data.itemId
+      ? {
+          itemId: data.itemId,
+          options: { oauthRedirectUrl: data.oauthRedirectUrl },
+        }
+      : {
+          options: {
+            clientUserId: context.userId,
+            // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy)
+            // fazem um redirecionamento de ida e volta para autorizar o
+            // acesso; sem essa URL a Pluggy não sabe pra onde trazer o
+            // usuário de volta e o fluxo falha com um erro genérico.
+            oauthRedirectUrl: data.oauthRedirectUrl,
+          },
+        };
     const result = await pluggyFetch<{ accessToken: string }>(credentials, "/connect_token", {
       method: "POST",
       body: JSON.stringify(body),
