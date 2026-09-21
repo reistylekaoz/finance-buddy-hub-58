@@ -367,6 +367,37 @@ const nav = [
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
 ];
+
+// Texto de ajuda por tela, mostrado no "?" ao lado do título — pensado pra
+// quem está usando o app pela primeira vez entender o que a tela faz e
+// quais são os principais recursos, sem precisar perguntar.
+const VIEW_HELP: Record<View, string> = {
+  dashboard:
+    'Visão geral das suas finanças: saldo atual, receita/despesa do período, controle orçamentário, previsões de contas a vencer, gráfico dos últimos 6 meses e saldo projetado.\n\n• Use o filtro de período (topo direito) pra restringir os números a um intervalo.\n• Clique num lançamento das listas pra editar, excluir ou confirmar uma previsão.\n• O painel de Controle orçamentário mostra o andamento dos orçamentos ativos — "Ver todos" abre a tela completa.',
+  accounts:
+    'Suas contas bancárias e carteiras, com o saldo atual de cada uma.\n\n• "Nova conta" cria uma conta manual (dinheiro, poupança etc.).\n• Contas de um banco conectado (Conexões bancárias) atualizam o saldo sozinhas.\n• Editar ou excluir pelos ícones em cada conta.',
+  transactions:
+    "Todos os seus lançamentos — receitas, despesas e transferências — manuais ou trazidos automaticamente de um banco conectado.\n\n• Filtre por conta, categoria, centro de custo, tipo ou período, e ordene por data ou valor.\n• Selecione vários lançamentos pra editar em lote ou uni-los numa transferência.\n• Provisões (lançamentos futuros) mostram um botão pra confirmar quando acontecerem de verdade.",
+  import:
+    'Importa extratos (OFX) ou revisa lançamentos trazidos automaticamente por um banco/cartão conectado, e concilia tudo com provisões já cadastradas.\n\n• Categorize em lote com o seletor + botão Confirmar.\n• "Conciliar" liga um lançamento importado a uma provisão existente, mesmo que tenha caído em outra conta.\n• "Transformar em transferência" une duas linhas (uma receita, uma despesa) numa transferência só.',
+  credit_cards:
+    'Seus cartões de crédito e as compras de cada fatura.\n\n• Lance compras manualmente (à vista ou parceladas) ou deixe sincronizar via Conexões bancárias.\n• "Pagar fatura" registra o pagamento total como uma despesa na conta escolhida.\n• Categorize cada compra pra aparecer certinho nos relatórios.',
+  investments:
+    "Seus investimentos (renda fixa, ações, fundos etc.) e as movimentações de cada um.\n\n• Trazidos automaticamente de uma corretora conectada (Conexões bancárias) ou lançados na mão.\n• Resgates são identificados sozinhos quando batem com um depósito na conta.\n• Clique num investimento pra ver ou lançar movimentações (aplicação, resgate, rendimento etc.).",
+  budgets:
+    "Metas de gasto por categoria, centro de custo, conta ou cartão, com acompanhamento automático do período.\n\n• Escolha um período fixo (com data final) ou recorrente (semanal, mensal, anual etc.) — a janela se renova sozinha.\n• Configure alertas por Telegram: report diário, aviso ao atingir X% e aviso de estouro, cada um pra quem você quiser.\n• A barra de progresso fica amarela perto do limiar e vermelha quando estoura.",
+  bank_connections:
+    'Conecta suas contas, cartões e investimentos a bancos e corretoras via Open Finance, pra sincronizar tudo automaticamente todo dia.\n\n• "Buscar itens automaticamente" lista e conecta tudo que já está autorizado.\n• Cole um Item ID manualmente se preferir conectar um de cada vez.\n• Erros de sincronização aparecem aqui, com detalhes.',
+  categories:
+    "Categorias usadas pra classificar receitas e despesas nos relatórios.\n\n• Crie subcategorias vinculando a uma categoria superior.\n• Categorias de despesa aparecem como opção nos orçamentos.\n• Editar ou excluir pelos ícones em cada categoria.",
+  cost_centers:
+    "Centros de custo agrupam lançamentos por outro critério além de categoria — por pessoa, projeto, imóvel etc.\n\n• Aparecem como opção adicional (e independente) ao categorizar um lançamento.\n• Também servem de escopo pro Controle orçamentário.\n• Desative um centro de custo sem excluir o histórico já lançado nele.",
+  assets:
+    "Seu patrimônio fora das contas correntes: imóveis, veículos, bens em geral.\n\n• Soma ao saldo total no Dashboard como ativo.\n• Atualize o valor manualmente sempre que mudar.\n• Editar ou excluir pelos ícones em cada item.",
+  settings:
+    'Configurações da conta: destinatários do Telegram, cartões vinculados a alertas, e o webhook do bot.\n\n• Cada destinatário escolhe frequência de relatórios (diário/semanal/mensal) e o escopo (todas as contas ou só algumas).\n• Copie o link de convite pra pessoa vincular o Telegram dela.\n• "Registrar webhook" é necessário uma vez só pra ativar o bot.',
+};
+
 const selectClass =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
 
@@ -1048,9 +1079,12 @@ export function FinanceApp() {
               </Button>
               <div>
                 <p className="text-xs font-medium uppercase text-muted-foreground">{name}</p>
-                <h1 className="font-display text-2xl font-semibold md:text-3xl">
-                  {nav.find((n) => n.id === view)?.label}
-                </h1>
+                <div className="flex items-center gap-1.5">
+                  <h1 className="font-display text-2xl font-semibold md:text-3xl">
+                    {nav.find((n) => n.id === view)?.label}
+                  </h1>
+                  <PageHelp text={VIEW_HELP[view]} />
+                </div>
               </div>
             </div>
             {view !== "import" &&
@@ -3443,6 +3477,27 @@ function HelpTip({ text }: { text: string }) {
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-64 text-xs leading-relaxed">{text}</PopoverContent>
+    </Popover>
+  );
+}
+
+// Igual ao HelpTip, mas maior e ao lado do título de cada tela — explica
+// pra quem é novo no app o que a tela faz e os principais recursos dela.
+function PageHelp({ text }: { text: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex size-5 flex-none items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+          aria-label="Como funciona esta tela"
+        >
+          <HelpCircle className="size-5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 whitespace-pre-line text-xs leading-relaxed">
+        {text}
+      </PopoverContent>
     </Popover>
   );
 }
