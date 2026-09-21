@@ -303,6 +303,10 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                 const { items } = await fetchPluggyItemsInfo({ data: { itemIds: existingIds } });
                 if (items.length) {
                   openPicker(items);
+                  // Preenche o campo manual com os ids encontrados, pra
+                  // "Teste de update" já ter o que usar sem precisar caçar
+                  // o Item ID em outro lugar.
+                  setManualItemIds(items.map((item) => item.id).join("\n"));
                 } else {
                   // Nenhum detalhe disponível (ids podem ter expirado) —
                   // ainda assim tenta reaproveitar o mais recente.
