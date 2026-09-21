@@ -177,12 +177,16 @@ export function CreditCards({
   categoryPath,
   centerName,
   accounts,
+  statusFilter,
+  onStatusFilterChange,
 }: {
   categories: Category[];
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
   accounts: Account[];
+  statusFilter: "all" | "active" | "inactive";
+  onStatusFilterChange: (value: "all" | "active" | "inactive") => void;
 }) {
   const [cards, setCards] = useState<CreditCardRow[]>([]);
   const [txs, setTxs] = useState<CardTransaction[]>([]);
@@ -250,6 +254,14 @@ export function CreditCards({
     }
     return map;
   }, [txs]);
+
+  const filteredCards = useMemo(
+    () =>
+      cards.filter((c) =>
+        statusFilter === "all" ? true : statusFilter === "active" ? c.is_active : !c.is_active,
+      ),
+    [cards, statusFilter],
+  );
 
   function openNewCard() {
     setEditingCardId(null);
@@ -574,20 +586,39 @@ export function CreditCards({
   return (
     <div className="space-y-6">
       <section>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold">Seus cartões</h2>
-          <Button size="sm" onClick={openNewCard}>
-            <Plus />
-            Novo cartão
-          </Button>
+          <div className="flex items-center gap-2">
+            {cards.length > 0 && (
+              <select
+                className={selectClass + " h-9 w-auto"}
+                value={statusFilter}
+                onChange={(e) =>
+                  onStatusFilterChange(e.target.value as "all" | "active" | "inactive")
+                }
+              >
+                <option value="all">Todos os cartões</option>
+                <option value="active">Só ativos</option>
+                <option value="inactive">Só inativos</option>
+              </select>
+            )}
+            <Button size="sm" onClick={openNewCard}>
+              <Plus />
+              Novo cartão
+            </Button>
+          </div>
         </div>
         {!cards.length ? (
           <div className="mt-3 rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
             Nenhum cartão cadastrado ainda. Crie o primeiro para começar a lançar as compras.
           </div>
+        ) : !filteredCards.length ? (
+          <p className="mt-3 py-10 text-center text-sm text-muted-foreground">
+            Nenhum cartão encontrado com esse filtro.
+          </p>
         ) : (
           <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {cards.map((card) => {
+            {filteredCards.map((card) => {
               const used = usedByCard.get(card.id) ?? 0;
               const limit = card.credit_limit || 0;
               const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;

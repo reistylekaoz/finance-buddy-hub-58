@@ -391,13 +391,16 @@ export async function syncConnection(
     if (pAccount.type === "CREDIT") {
       const { data: existingCard } = await supabase
         .from("credit_cards")
-        .select("id")
+        .select("id, is_active")
         .eq("pluggy_account_id", pAccount.id)
         // Sempre limitar ao dono da conexão: o cron roda com o cliente de
         // serviço (sem RLS) para todos os usuários, e um pluggy_account_id
         // repetido entre usuários (sandbox) religaria o cartão de outro.
         .eq("user_id", userId)
         .maybeSingle();
+      // Cartão marcado como inativo pelo usuário para de ser atualizado —
+      // nem saldo/limite, nem novas compras.
+      if (existingCard?.is_active === false) continue;
       let cardId = existingCard?.id ?? null;
       if (!cardId) {
         const { data: created, error } = await supabase
@@ -457,11 +460,14 @@ export async function syncConnection(
     } else {
       const { data: existingAccount } = await supabase
         .from("accounts")
-        .select("id")
+        .select("id, is_active")
         .eq("pluggy_account_id", pAccount.id)
         // Mesma proteção do cartão: nunca reaproveitar a conta de outro usuário.
         .eq("user_id", userId)
         .maybeSingle();
+      // Conta marcada como inativa pelo usuário para de ser atualizada — nem
+      // saldo, nem novos lançamentos.
+      if (existingAccount?.is_active === false) continue;
       let accountId = existingAccount?.id ?? null;
       // A Pluggy manda o conector usado (ex.: "MeuPluggy", o agregador), não
       // o banco em si — a instituição real vem dos dados da própria conta.
@@ -481,7 +487,7 @@ export async function syncConnection(
       if (!accountId) {
         const candidates = await supabase
           .from("accounts")
-          .select("id, name, account_number")
+          .select("id, name, account_number, is_active")
           .eq("user_id", userId)
           .is("pluggy_account_id", null);
         const normalize = (value: string | null | undefined) =>
@@ -493,6 +499,8 @@ export async function syncConnection(
             candidates.data?.find((a) => normalize(a.account_number) === targetNumber)) ||
           (targetName && candidates.data?.find((a) => normalize(a.name) === targetName)) ||
           null;
+        // Conta cadastrada à mão e já marcada inativa: não adota, não sincroniza.
+        if (adopted?.is_active === false) continue;
         if (adopted) accountId = adopted.id;
       }
       const isNewAccount = !existingAccount?.id;

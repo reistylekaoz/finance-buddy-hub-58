@@ -107,6 +107,8 @@ type TransactionsFilters = {
   sortKey: SortKey;
 };
 
+type StatusFilter = "all" | "active" | "inactive";
+
 const TRANSACTION_TYPE_OPTIONS: FilterOption[] = [
   { id: "income", label: "Receita" },
   { id: "expense", label: "Despesa" },
@@ -427,7 +429,9 @@ export function FinanceApp() {
       await Promise.all([
         supabase
           .from("profiles")
-          .select("display_name, dashboard_filters, dashboard_widgets, transactions_filters")
+          .select(
+            "display_name, dashboard_filters, dashboard_widgets, transactions_filters, active_filters",
+          )
           .maybeSingle(),
         supabase.from("accounts").select("*").order("created_at"),
         supabase.from("categories").select("*").order("name"),
@@ -476,6 +480,14 @@ export function FinanceApp() {
         period: savedTxFilters.period ?? { from: "", to: "" },
         sortKey: savedTxFilters.sortKey ?? "date_desc",
       });
+    }
+    const savedActiveFilters = profile.data?.active_filters as {
+      accounts?: StatusFilter;
+      cards?: StatusFilter;
+    } | null;
+    if (savedActiveFilters) {
+      setAccountsStatusFilterRaw(savedActiveFilters.accounts ?? "all");
+      setCardsStatusFilterRaw(savedActiveFilters.cards ?? "all");
     }
     setLoading(false);
   }
@@ -553,6 +565,25 @@ export function FinanceApp() {
   function setTxFilters(next: TransactionsFilters) {
     setTxFiltersRaw(next);
     void persistTransactionsFilters(next);
+  }
+
+  // Filtro de ativa/inativa/todas das telas de Contas e Cartões de crédito,
+  // persistido em profiles.active_filters do mesmo jeito que os filtros acima.
+  const [accountsStatusFilter, setAccountsStatusFilterRaw] = useState<StatusFilter>("all");
+  const [cardsStatusFilter, setCardsStatusFilterRaw] = useState<StatusFilter>("all");
+  async function persistActiveFilters(next: { accounts: StatusFilter; cards: StatusFilter }) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return;
+    await supabase.from("profiles").update({ active_filters: next }).eq("id", userId);
+  }
+  function setAccountsStatusFilter(value: StatusFilter) {
+    setAccountsStatusFilterRaw(value);
+    void persistActiveFilters({ accounts: value, cards: cardsStatusFilter });
+  }
+  function setCardsStatusFilter(value: StatusFilter) {
+    setCardsStatusFilterRaw(value);
+    void persistActiveFilters({ accounts: accountsStatusFilter, cards: value });
   }
   useEffect(() => {
     void (async () => {
@@ -1178,6 +1209,8 @@ export function FinanceApp() {
                   rateDate={rateDate}
                   onEdit={(a: Account) => edit("account", a)}
                   onDelete={(a: Account) => remove("account", a.id, a.name)}
+                  statusFilter={accountsStatusFilter}
+                  onStatusFilterChange={setAccountsStatusFilter}
                 />
               )}
               {view === "transactions" && (
@@ -1217,6 +1250,8 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   accounts={accounts}
+                  statusFilter={cardsStatusFilter}
+                  onStatusFilterChange={setCardsStatusFilter}
                 />
               )}
               {view === "investments" && <Investments />}
@@ -2747,13 +2782,20 @@ function Accounts({
   rateDate,
   onEdit,
   onDelete,
+  statusFilter,
+  onStatusFilterChange,
 }: {
   accounts: (Account & { balance: number; currency: string; balanceBRL: number | null })[];
   onAdd: () => void;
   rateDate: string;
   onEdit: (a: Account) => void;
   onDelete: (a: Account) => void;
+  statusFilter: StatusFilter;
+  onStatusFilterChange: (value: StatusFilter) => void;
 }) {
+  const filteredAccounts = accounts.filter((a) =>
+    statusFilter === "all" ? true : statusFilter === "active" ? a.is_active : !a.is_active,
+  );
   if (!accounts.length)
     return (
       <Empty
@@ -2763,38 +2805,57 @@ function Accounts({
       />
     );
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {accounts.map((a) => (
-        <div key={a.id} className="rounded-lg border border-border bg-card p-5">
-          <div className="flex items-start justify-between">
-            <div className="grid size-10 place-items-center overflow-hidden rounded-md bg-primary-soft text-primary">
-              <BankBadge institution={a.institution} />
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <select
+          className={cn(selectClass, "h-9 w-auto")}
+          value={statusFilter}
+          onChange={(e) => onStatusFilterChange(e.target.value as StatusFilter)}
+        >
+          <option value="all">Todas as contas</option>
+          <option value="active">Só ativas</option>
+          <option value="inactive">Só inativas</option>
+        </select>
+      </div>
+      {filteredAccounts.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredAccounts.map((a) => (
+            <div key={a.id} className="rounded-lg border border-border bg-card p-5">
+              <div className="flex items-start justify-between">
+                <div className="grid size-10 place-items-center overflow-hidden rounded-md bg-primary-soft text-primary">
+                  <BankBadge institution={a.institution} />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                    {a.is_active ? "Ativa" : "Inativa"}
+                  </span>
+                  <RowActions onEdit={() => onEdit(a)} onDelete={() => onDelete(a)} />
+                </div>
+              </div>
+              <h2 className="mt-5 font-semibold">{a.name}</h2>
+              <p className="text-sm text-muted-foreground">{a.institution || "Conta pessoal"}</p>
+              <p className="mt-4 font-mono text-2xl tabular-nums">
+                {formatCurrency(a.balance, a.currency)}
+              </p>
+              {a.currency !== "BRL" && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {a.balanceBRL === null
+                    ? "Cotação indisponível hoje"
+                    : `${money.format(a.balanceBRL)} pela cotação${
+                        rateDate
+                          ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}`
+                          : " do dia anterior"
+                      }`}
+                </p>
+              )}
             </div>
-            <div className="flex items-center gap-1">
-              <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                {a.is_active ? "Ativa" : "Inativa"}
-              </span>
-              <RowActions onEdit={() => onEdit(a)} onDelete={() => onDelete(a)} />
-            </div>
-          </div>
-          <h2 className="mt-5 font-semibold">{a.name}</h2>
-          <p className="text-sm text-muted-foreground">{a.institution || "Conta pessoal"}</p>
-          <p className="mt-4 font-mono text-2xl tabular-nums">
-            {formatCurrency(a.balance, a.currency)}
-          </p>
-          {a.currency !== "BRL" && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {a.balanceBRL === null
-                ? "Cotação indisponível hoje"
-                : `${money.format(a.balanceBRL)} pela cotação${
-                    rateDate
-                      ? ` de ${dateFmt.format(new Date(`${rateDate}T12:00:00`))}`
-                      : " do dia anterior"
-                  }`}
-            </p>
-          )}
+          ))}
         </div>
-      ))}
+      ) : (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          Nenhuma conta encontrada com esse filtro.
+        </p>
+      )}
     </div>
   );
 }
