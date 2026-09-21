@@ -369,17 +369,28 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     setDiscovering(true);
     try {
       const { items } = await discoverPluggyItems();
+      setDiscovering(false);
       if (!items.length) {
         toast.error("Nenhum item encontrado na Pluggy pra essas credenciais.");
         return;
       }
       openPicker(items);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Falha ao buscar itens automaticamente.",
-      );
-    } finally {
       setDiscovering(false);
+      const message = error instanceof Error ? error.message : "";
+      // GET /v2/items é opt-in na Pluggy e nem toda conta tem habilitado —
+      // quando essa listagem falha por isso, a única forma de descobrir os
+      // itens já existentes é tentando conectar de novo: a Pluggy recusa
+      // com ITEM_USER_ALREADY_EXISTS e devolve os ids existentes, que o
+      // onError do widget (abaixo) já sabe transformar no mesmo seletor.
+      if (message.includes("opt-in")) {
+        toast.info(
+          "Listagem automática não habilitada nessa conta Pluggy — abrindo o conector pra localizar os itens existentes por aí.",
+        );
+        await connectNewBank();
+        return;
+      }
+      toast.error(message || "Falha ao buscar itens automaticamente.");
     }
   }
 
@@ -534,7 +545,8 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
               <div className="flex-1 text-xs text-muted-foreground">
                 Já existem itens conectados direto pela Pluggy (dashboard deles, sandbox etc.)?
                 Busca todos automaticamente e deixa você escolher quais conectar, sem colar ID por
-                ID.
+                ID — se a listagem direta não estiver habilitada pra sua conta, abre o conector pra
+                localizar do mesmo jeito.
               </div>
               <Button
                 type="button"
