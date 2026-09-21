@@ -120,18 +120,31 @@ export async function budgetSpent(
     return (data ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
   }
 
+  // Orçamento por categoria/centro de custo soma de todas as contas/cartões
+  // do usuário — contas/cartões inativos ficam de fora, igual ao total do
+  // dashboard, já que deixaram de contar pro sistema.
+  const [{ data: activeAccounts }, { data: activeCards }] = await Promise.all([
+    supabase.from("accounts").select("id").eq("user_id", userId).eq("is_active", true),
+    supabase.from("credit_cards").select("id").eq("user_id", userId).eq("is_active", true),
+  ]);
+  const activeAccountIds = (activeAccounts ?? []).map((a) => a.id);
+  const activeCardIds = (activeCards ?? []).map((c) => c.id);
+  if (!activeAccountIds.length && !activeCardIds.length) return 0;
+
   let bankQuery = supabase
     .from("transactions")
     .select("amount")
     .eq("user_id", userId)
     .eq("transaction_type", "expense")
     .eq("status", "confirmed")
+    .in("account_id", activeAccountIds.length ? activeAccountIds : [""])
     .gte("transaction_date", periodStart)
     .lte("transaction_date", periodEnd);
   let cardQuery = supabase
     .from("credit_card_transactions")
     .select("amount")
     .eq("user_id", userId)
+    .in("card_id", activeCardIds.length ? activeCardIds : [""])
     .gte("purchase_date", periodStart)
     .lte("purchase_date", periodEnd);
 

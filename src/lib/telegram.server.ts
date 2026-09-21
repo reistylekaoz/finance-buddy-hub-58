@@ -878,14 +878,35 @@ async function sendDigestForRecipient(
     .lte("purchase_date", to)
     .is("reviewed_at", null);
 
-  if (!recipient.all_accounts) {
-    bankQuery = recipient.account_ids.length
-      ? bankQuery.in("account_id", recipient.account_ids)
-      : bankQuery.eq("account_id", "00000000-0000-0000-0000-000000000000");
-    cardQuery = recipient.card_ids.length
-      ? cardQuery.in("card_id", recipient.card_ids)
-      : cardQuery.eq("card_id", "00000000-0000-0000-0000-000000000000");
-  }
+  // Contas/cartões inativos não entram no digest — deixaram de ser
+  // sincronizados automaticamente, então não faz sentido pedir revisão deles.
+  const [{ data: activeAccountRows }, { data: activeCardRows }] = await Promise.all([
+    supabaseAdmin
+      .from("accounts")
+      .select("id")
+      .eq("user_id", recipient.user_id)
+      .eq("is_active", true),
+    supabaseAdmin
+      .from("credit_cards")
+      .select("id")
+      .eq("user_id", recipient.user_id)
+      .eq("is_active", true),
+  ]);
+  const activeAccountIds = new Set((activeAccountRows ?? []).map((a) => a.id));
+  const activeCardIds = new Set((activeCardRows ?? []).map((c) => c.id));
+
+  const scopedAccountIds = recipient.all_accounts
+    ? Array.from(activeAccountIds)
+    : recipient.account_ids.filter((id) => activeAccountIds.has(id));
+  const scopedCardIds = recipient.all_accounts
+    ? Array.from(activeCardIds)
+    : recipient.card_ids.filter((id) => activeCardIds.has(id));
+  bankQuery = scopedAccountIds.length
+    ? bankQuery.in("account_id", scopedAccountIds)
+    : bankQuery.eq("account_id", "00000000-0000-0000-0000-000000000000");
+  cardQuery = scopedCardIds.length
+    ? cardQuery.in("card_id", scopedCardIds)
+    : cardQuery.eq("card_id", "00000000-0000-0000-0000-000000000000");
 
   const [{ data: bankRows }, { data: cardRows }] = await Promise.all([bankQuery, cardQuery]);
   const bank = bankRows ?? [];
