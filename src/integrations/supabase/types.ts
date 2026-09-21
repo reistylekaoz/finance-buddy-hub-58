@@ -701,6 +701,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_filters: Json | null
           created_at: string
           dashboard_filters: Json | null
           dashboard_widgets: Json | null
@@ -712,6 +713,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          active_filters?: Json | null
           created_at?: string
           dashboard_filters?: Json | null
           dashboard_widgets?: Json | null
@@ -723,6 +725,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          active_filters?: Json | null
           created_at?: string
           dashboard_filters?: Json | null
           dashboard_widgets?: Json | null
