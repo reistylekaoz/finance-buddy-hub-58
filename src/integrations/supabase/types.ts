@@ -14,6 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_members: {
+        Row: {
+          accepted_at: string | null
+          can_edit: boolean
+          can_manage_connections: boolean
+          can_manage_members: boolean
+          created_at: string
+          email: string
+          id: string
+          invite_token: string
+          invited_at: string
+          member_user_id: string | null
+          owner_user_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          can_edit?: boolean
+          can_manage_connections?: boolean
+          can_manage_members?: boolean
+          created_at?: string
+          email: string
+          id?: string
+          invite_token?: string
+          invited_at?: string
+          member_user_id?: string | null
+          owner_user_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          can_edit?: boolean
+          can_manage_connections?: boolean
+          can_manage_members?: boolean
+          created_at?: string
+          email?: string
+          id?: string
+          invite_token?: string
+          invited_at?: string
+          member_user_id?: string | null
+          owner_user_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       accounts: {
         Row: {
           account_number: string | null
@@ -968,7 +1016,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      accept_account_invite: { Args: { p_token: string }; Returns: string }
+      has_account_access: {
+        Args: { require_edit?: boolean; target_user_id: string }
+        Returns: boolean
+      }
+      has_connections_access: {
+        Args: { target_user_id: string }
+        Returns: boolean
+      }
+      has_members_access: { Args: { target_user_id: string }; Returns: boolean }
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
