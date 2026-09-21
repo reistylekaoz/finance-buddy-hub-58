@@ -228,13 +228,9 @@ export function AccessProfiles() {
                 </div>
                 <div className="flex items-center gap-1">
                   {m.status === "pending" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => void copyLink(m.invite_token)}
-                      aria-label="Copiar link de convite"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => void copyLink(m.invite_token)}>
                       <Copy className="size-4" />
+                      Copiar convite
                     </Button>
                   )}
                   <Button
