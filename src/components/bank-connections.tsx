@@ -338,6 +338,20 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
             })();
             return;
           }
+          if (details?.message === "ITEM_USER_ALREADY_EXISTS") {
+            // A Pluggy confirmou a duplicidade mas, dessa vez, não mandou a
+            // lista de ids existentes junto (acontece — depende da conta/
+            // aplicação) — sem isso não tem como buscar os detalhes nem
+            // abrir o seletor automaticamente. Único jeito é pegar o Item ID
+            // direto no painel da Pluggy e colar manualmente.
+            console.error(error);
+            toast.error(
+              'Já existe uma conexão com essas credenciais, mas a Pluggy não te devolveu o ID dela dessa vez. Copie o Item ID em dashboard.pluggy.ai (menu ⋮ do item → "Copiar Item ID") e cole no campo "IDs de itens existentes" abaixo.',
+              { duration: 12000 },
+            );
+            setConnecting(false);
+            return;
+          }
           console.error(error);
           toast.error("Não foi possível conectar ao banco.");
           setConnecting(false);
