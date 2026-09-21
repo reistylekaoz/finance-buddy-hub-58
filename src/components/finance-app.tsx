@@ -3673,6 +3673,32 @@ function InstallAppSection() {
   );
 }
 
+// Palavra aleatória exibida na hora de apagar todos os dados — o usuário
+// precisa digitar exatamente essa palavra (sorteada de novo a cada vez que o
+// diálogo abre) pra confirmar, em vez de um texto fixo fácil de repetir sem
+// prestar atenção.
+const CONFIRM_WORDS = [
+  "ABACAXI",
+  "GIRASSOL",
+  "TATU",
+  "VULCAO",
+  "PINGUIM",
+  "CACTO",
+  "FAROL",
+  "MORANGO",
+  "TUCANO",
+  "ELEFANTE",
+  "ORQUIDEA",
+  "SATELITE",
+  "BAOBA",
+  "CASCATA",
+  "LAGARTO",
+  "BUSSOLA",
+];
+function randomConfirmWord(): string {
+  return CONFIRM_WORDS[Math.floor(Math.random() * CONFIRM_WORDS.length)] ?? CONFIRM_WORDS[0]!;
+}
+
 function Settings({
   accounts,
   onWiped,
@@ -3691,8 +3717,15 @@ function Settings({
   const [wipeOpen, setWipeOpen] = useState(false);
   const [wipeKeepCategories, setWipeKeepCategories] = useState(true);
   const [wipeKeepCostCenters, setWipeKeepCostCenters] = useState(true);
+  const [wipeConfirmWord, setWipeConfirmWord] = useState("");
   const [wipeConfirmText, setWipeConfirmText] = useState("");
   const [wiping, setWiping] = useState(false);
+
+  function openWipeDialog() {
+    setWipeConfirmWord(randomConfirmWord());
+    setWipeConfirmText("");
+    setWipeOpen(true);
+  }
 
   async function load() {
     setLoading(true);
@@ -3913,7 +3946,7 @@ function Settings({
               bancárias (removendo também o acesso na Pluggy). Ação irreversível.
             </p>
           </div>
-          <Button variant="destructive" onClick={() => setWipeOpen(true)}>
+          <Button variant="destructive" onClick={openWipeDialog}>
             <Trash2 />
             Apagar todos os dados
           </Button>
@@ -3959,12 +3992,14 @@ function Settings({
             </label>
             <label className="space-y-1.5 text-sm">
               <span className="text-xs font-medium uppercase text-muted-foreground">
-                Digite APAGAR para confirmar
+                Digite{" "}
+                <span className="font-mono font-semibold text-destructive">{wipeConfirmWord}</span>{" "}
+                para confirmar
               </span>
               <Input
                 value={wipeConfirmText}
                 onChange={(e) => setWipeConfirmText(e.target.value)}
-                placeholder="APAGAR"
+                placeholder={wipeConfirmWord}
                 autoComplete="off"
               />
             </label>
@@ -3975,7 +4010,7 @@ function Settings({
             </Button>
             <Button
               variant="destructive"
-              disabled={wiping || wipeConfirmText.trim().toUpperCase() !== "APAGAR"}
+              disabled={wiping || wipeConfirmText.trim().toUpperCase() !== wipeConfirmWord}
               onClick={() => void performWipe()}
             >
               {wiping ? <Loader2 className="animate-spin" /> : <Trash2 />}
