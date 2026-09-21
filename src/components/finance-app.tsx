@@ -51,6 +51,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -91,6 +92,7 @@ import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
@@ -1284,7 +1286,7 @@ export function FinanceApp() {
                   onDelete={(a: Asset) => remove("asset", a.id, a.name)}
                 />
               )}
-              {view === "settings" && <Settings accounts={accounts} />}
+              {view === "settings" && <Settings accounts={accounts} onWiped={load} />}
             </>
           )}
         </main>
@@ -3671,7 +3673,13 @@ function InstallAppSection() {
   );
 }
 
-function Settings({ accounts }: { accounts: Account[] }) {
+function Settings({
+  accounts,
+  onWiped,
+}: {
+  accounts: Account[];
+  onWiped: () => void | Promise<void>;
+}) {
   const [recipients, setRecipients] = useState<TelegramRecipientRow[]>([]);
   const [cards, setCards] = useState<{ id: string; name: string }[]>([]);
   const [botUsername, setBotUsername] = useState<string | null>(null);
@@ -3680,6 +3688,11 @@ function Settings({ accounts }: { accounts: Account[] }) {
   const [newLabel, setNewLabel] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [adding, setAdding] = useState(false);
+  const [wipeOpen, setWipeOpen] = useState(false);
+  const [wipeKeepCategories, setWipeKeepCategories] = useState(true);
+  const [wipeKeepCostCenters, setWipeKeepCostCenters] = useState(true);
+  const [wipeConfirmText, setWipeConfirmText] = useState("");
+  const [wiping, setWiping] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -3752,6 +3765,23 @@ function Settings({ accounts }: { accounts: Account[] }) {
       toast.error(error instanceof Error ? error.message : "Falha ao registrar o webhook.");
     } finally {
       setRegistering(false);
+    }
+  }
+
+  async function performWipe() {
+    setWiping(true);
+    try {
+      await wipeUserFinancialData({
+        data: { keepCategories: wipeKeepCategories, keepCostCenters: wipeKeepCostCenters },
+      });
+      toast.success("Todos os dados financeiros foram apagados.");
+      setWipeOpen(false);
+      setWipeConfirmText("");
+      await onWiped();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao apagar os dados.");
+    } finally {
+      setWiping(false);
     }
   }
 
@@ -3872,6 +3902,88 @@ function Settings({ accounts }: { accounts: Account[] }) {
           </div>
         </details>
       </section>
+
+      <section className="rounded-lg border border-destructive/40 bg-destructive-soft/40 p-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <Trash2 className="size-6 flex-none text-destructive" />
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold text-destructive">Zona de risco</h2>
+            <p className="text-xs text-muted-foreground">
+              Apaga contas, cartões, lançamentos, compras, investimentos, orçamentos e conexões
+              bancárias (removendo também o acesso na Pluggy). Ação irreversível.
+            </p>
+          </div>
+          <Button variant="destructive" onClick={() => setWipeOpen(true)}>
+            <Trash2 />
+            Apagar todos os dados
+          </Button>
+        </div>
+      </section>
+
+      <Dialog
+        open={wipeOpen}
+        onOpenChange={(open) => {
+          if (!wiping) {
+            setWipeOpen(open);
+            if (!open) setWipeConfirmText("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apagar todos os dados financeiros?</DialogTitle>
+            <DialogDescription>
+              Isso exclui permanentemente contas, cartões, lançamentos, compras, investimentos,
+              orçamentos e conexões bancárias — inclusive removendo o acesso na Pluggy. Não pode ser
+              desfeito.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--primary)]"
+                checked={wipeKeepCategories}
+                onChange={(e) => setWipeKeepCategories(e.target.checked)}
+              />
+              Manter categorias
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--primary)]"
+                checked={wipeKeepCostCenters}
+                onChange={(e) => setWipeKeepCostCenters(e.target.checked)}
+              />
+              Manter centros de custo
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-xs font-medium uppercase text-muted-foreground">
+                Digite APAGAR para confirmar
+              </span>
+              <Input
+                value={wipeConfirmText}
+                onChange={(e) => setWipeConfirmText(e.target.value)}
+                placeholder="APAGAR"
+                autoComplete="off"
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWipeOpen(false)} disabled={wiping}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={wiping || wipeConfirmText.trim().toUpperCase() !== "APAGAR"}
+              onClick={() => void performWipe()}
+            >
+              {wiping ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              {wiping ? "Apagando…" : "Apagar tudo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

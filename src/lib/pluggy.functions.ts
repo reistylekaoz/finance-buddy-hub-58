@@ -990,3 +990,108 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
 
     return { ok: true };
   });
+
+// Reset completo dos dados financeiros do usuário — usado pelo botão
+// "Apagar todos os dados" em Configurações. Categorias e centros de custo
+// são preservados por padrão (o usuário decide, na tela); todo o resto
+// (contas, cartões, lançamentos, compras, investimentos, orçamentos e
+// conexões bancárias, com remoção do item na Pluggy) é sempre apagado.
+export const wipeUserFinancialData = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { keepCategories: boolean; keepCostCenters: boolean }) => input)
+  .handler(async ({ context, data }) => {
+    const userId = context.userId;
+    const supabase = context.supabase;
+
+    const { data: connections } = await supabase
+      .from("bank_connections")
+      .select("id, pluggy_item_id");
+    if (connections?.length) {
+      // Revoga o acesso na Pluggy antes de apagar os registros locais —
+      // best-effort, uma falha aqui não impede o resto do reset.
+      const credentials = await getUserPluggyCredentials(userId).catch(() => null);
+      if (credentials) {
+        const results = await Promise.allSettled(
+          connections.map((c) =>
+            pluggyFetch(credentials, `/items/${c.pluggy_item_id}`, { method: "DELETE" }),
+          ),
+        );
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed) {
+          await createSupportTicket(supabase, {
+            user_id: userId,
+            title: "Falha ao remover itens na Pluggy durante reset completo de dados",
+            description: `${failed} de ${connections.length} item(ns) não foram removidos do lado da Pluggy.`,
+          });
+        }
+      }
+    }
+
+    // Ordem respeita as foreign keys: filhos antes dos pais (ex.:
+    // transactions.account_id é ON DELETE RESTRICT — accounts só pode ser
+    // apagada depois que os lançamentos dela já sumiram).
+    const { error: investmentTxError } = await supabase
+      .from("investment_transactions")
+      .delete()
+      .eq("user_id", userId);
+    if (investmentTxError) throw new Error(investmentTxError.message);
+
+    const { error: cardTxError } = await supabase
+      .from("credit_card_transactions")
+      .delete()
+      .eq("user_id", userId);
+    if (cardTxError) throw new Error(cardTxError.message);
+
+    const { error: alertsError } = await supabase
+      .from("budget_alerts_sent")
+      .delete()
+      .eq("user_id", userId);
+    if (alertsError) throw new Error(alertsError.message);
+
+    const { error: budgetRecipientsError } = await supabase
+      .from("budget_recipients")
+      .delete()
+      .eq("user_id", userId);
+    if (budgetRecipientsError) throw new Error(budgetRecipientsError.message);
+
+    const { error: budgetsError } = await supabase.from("budgets").delete().eq("user_id", userId);
+    if (budgetsError) throw new Error(budgetsError.message);
+
+    const { error: transactionsError } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("user_id", userId);
+    if (transactionsError) throw new Error(transactionsError.message);
+
+    const { error: investmentsError } = await supabase
+      .from("investments")
+      .delete()
+      .eq("user_id", userId);
+    if (investmentsError) throw new Error(investmentsError.message);
+
+    const { error: cardsError } = await supabase
+      .from("credit_cards")
+      .delete()
+      .eq("user_id", userId);
+    if (cardsError) throw new Error(cardsError.message);
+
+    const { error: accountsError } = await supabase.from("accounts").delete().eq("user_id", userId);
+    if (accountsError) throw new Error(accountsError.message);
+
+    const { error: connectionsError } = await supabase
+      .from("bank_connections")
+      .delete()
+      .eq("user_id", userId);
+    if (connectionsError) throw new Error(connectionsError.message);
+
+    if (!data.keepCategories) {
+      const { error } = await supabase.from("categories").delete().eq("user_id", userId);
+      if (error) throw new Error(error.message);
+    }
+    if (!data.keepCostCenters) {
+      const { error } = await supabase.from("cost_centers").delete().eq("user_id", userId);
+      if (error) throw new Error(error.message);
+    }
+
+    return { ok: true };
+  });
