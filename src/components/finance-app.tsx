@@ -40,6 +40,7 @@ import {
   Trash2,
   Shapes,
   TrendingUp,
+  Users,
   WalletCards,
   X,
 } from "lucide-react";
@@ -86,7 +87,8 @@ import { CreditCards } from "@/components/credit-cards";
 import { Investments } from "@/components/investments";
 import { Budgets, BudgetsPanel } from "@/components/budgets";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { ProfileSwitcher } from "@/components/active-profile";
+import { ProfileSwitcher, useActiveProfile } from "@/components/active-profile";
+import { AccessProfiles } from "@/components/access-profiles";
 import { DashboardCustomizer } from "@/components/dashboard-customizer";
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder, type WidgetId } from "@/lib/dashboard-widgets";
 import { BankConnections } from "@/components/bank-connections";
@@ -131,7 +133,8 @@ type View =
   | "categories"
   | "cost_centers"
   | "assets"
-  | "settings";
+  | "settings"
+  | "access_profiles";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string;
@@ -375,6 +378,7 @@ const nav = [
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
+  { id: "access_profiles" as const, label: "Perfis de acesso", icon: Users },
 ];
 
 // Texto de ajuda por tela, mostrado no "?" ao lado do título — pensado pra
@@ -405,6 +409,8 @@ const VIEW_HELP: Record<View, string> = {
     "Seu patrimônio fora das contas correntes: imóveis, veículos, bens em geral.\n\n• Soma ao saldo total no Dashboard como ativo.\n• Atualize o valor manualmente sempre que mudar.\n• Editar ou excluir pelos ícones em cada item.",
   settings:
     'Configurações da conta: destinatários do Telegram, cartões vinculados a alertas, e o webhook do bot.\n\n• Cada destinatário escolhe frequência de relatórios (diário/semanal/mensal) e o escopo (todas as contas ou só algumas).\n• Copie o link de convite pra pessoa vincular o Telegram dela.\n• "Registrar webhook" é necessário uma vez só pra ativar o bot.',
+  access_profiles:
+    'Quem mais tem acesso a essa conta, além de você.\n\n• "Convidar" gera um link único — mande pra pessoa por qualquer meio.\n• Escolha o que cada convidado pode fazer: editar dados, gerenciar conexões bancárias e/ou convidar outras pessoas.\n• Revogue o acesso a qualquer momento.',
 };
 
 const selectClass =
@@ -412,6 +418,7 @@ const selectClass =
 
 export function FinanceApp() {
   const navigate = useNavigate();
+  const { activeProfile } = useActiveProfile();
   const [view, setView] = useState<View>("dashboard");
   const [modal, setModal] = useState<Modal>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -1066,20 +1073,22 @@ export function FinanceApp() {
             </Button>
           </div>
           <nav className="mt-7 space-y-1">
-            {nav.map((item) => (
-              <Button
-                key={item.id}
-                variant={view === item.id ? "default" : "ghost"}
-                className="w-full justify-start"
-                onClick={() => {
-                  setView(item.id);
-                  setMobileOpen(false);
-                }}
-              >
-                <item.icon />
-                {item.label}
-              </Button>
-            ))}
+            {nav
+              .filter((item) => item.id !== "access_profiles" || activeProfile.canManageMembers)
+              .map((item) => (
+                <Button
+                  key={item.id}
+                  variant={view === item.id ? "default" : "ghost"}
+                  className="w-full justify-start"
+                  onClick={() => {
+                    setView(item.id);
+                    setMobileOpen(false);
+                  }}
+                >
+                  <item.icon />
+                  {item.label}
+                </Button>
+              ))}
           </nav>
           <div className="mt-8 border-t border-border pt-5">
             <p className="px-3 text-xs font-medium uppercase text-muted-foreground">Contas</p>
@@ -1148,7 +1157,8 @@ export function FinanceApp() {
               view !== "credit_cards" &&
               view !== "investments" &&
               view !== "budgets" &&
-              view !== "bank_connections" && (
+              view !== "bank_connections" &&
+              view !== "access_profiles" && (
                 <Button
                   onClick={() =>
                     open(
@@ -1289,6 +1299,7 @@ export function FinanceApp() {
                 />
               )}
               {view === "settings" && <Settings accounts={accounts} onWiped={load} />}
+              {view === "access_profiles" && <AccessProfiles />}
             </>
           )}
         </main>

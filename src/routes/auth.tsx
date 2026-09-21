@@ -10,6 +10,8 @@ import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
 import darkLogo from "@/assets/fluxora-logo-dark-transparent.png.asset.json";
 
 export const Route = createFileRoute("/auth")({
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } =>
+    typeof search["redirect"] === "string" ? { redirect: search["redirect"] } : {},
   head: () => ({
     meta: [
       { title: "Acesso | Fluxora" },
@@ -28,6 +30,14 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
+  const { redirect: redirectTo } = Route.useSearch();
+  // redirectTo é um caminho dinâmico (ex.: /convite/<token>), fora do que o
+  // router valida em tempo de tipos — navegação de página inteira em vez de
+  // navigate({ to }).
+  const goToApp = () => {
+    if (redirectTo) window.location.href = redirectTo;
+    else navigate({ to: "/dashboard" });
+  };
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,11 +64,11 @@ function AuthPage() {
       });
       if (err) setError(err.message);
       else if (!data.session) setMessage("Conta criada. Confirme seu e-mail para continuar.");
-      else navigate({ to: "/dashboard" });
+      else goToApp();
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password });
       if (err) setError("E-mail ou senha incorretos.");
-      else navigate({ to: "/dashboard" });
+      else goToApp();
     }
     setBusy(false);
   }
@@ -68,7 +78,7 @@ function AuthPage() {
       redirect_uri: window.location.origin,
     });
     if (result.error) setError(result.error.message);
-    else if (!result.redirected) navigate({ to: "/dashboard" });
+    else if (!result.redirected) goToApp();
   }
   return (
     <main className="grid min-h-screen lg:grid-cols-[1.1fr_.9fr]">
