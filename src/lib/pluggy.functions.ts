@@ -905,14 +905,18 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
 
-    // accounts/credit_cards.bank_connection_id é ON DELETE SET NULL (não
-    // CASCADE): apagar a conexão sem isso os deixaria órfãos — reaproveitados
-    // (com todo o histórico antigo) na próxima reconexão, em vez de recriados
-    // do zero. Por isso o cascade é feito aqui, explicitamente.
-    const [{ data: orphanedAccounts }, { data: orphanedCards }] = await Promise.all([
-      context.supabase.from("accounts").select("id").eq("bank_connection_id", connection.id),
-      context.supabase.from("credit_cards").select("id").eq("bank_connection_id", connection.id),
-    ]);
+    // accounts/credit_cards/investments.bank_connection_id é ON DELETE SET
+    // NULL (não CASCADE): apagar a conexão sem isso os deixaria órfãos —
+    // contas/cartões reaproveitados (com todo o histórico antigo) na próxima
+    // reconexão em vez de recriados do zero, e investimentos simplesmente
+    // esquecidos na tela, sem conexão nenhuma. Por isso o cascade é feito
+    // aqui, explicitamente.
+    const [{ data: orphanedAccounts }, { data: orphanedCards }, { data: orphanedInvestments }] =
+      await Promise.all([
+        context.supabase.from("accounts").select("id").eq("bank_connection_id", connection.id),
+        context.supabase.from("credit_cards").select("id").eq("bank_connection_id", connection.id),
+        context.supabase.from("investments").select("id").eq("bank_connection_id", connection.id),
+      ]);
 
     for (const account of orphanedAccounts ?? []) {
       // Só o que veio do banco é removido; previsões e lançamentos digitados
@@ -962,6 +966,20 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
           orphanedCards.map((c) => c.id),
         );
       if (cardError) throw new Error(cardError.message);
+    }
+    if (orphanedInvestments?.length) {
+      // investment_transactions cai em cascata (ON DELETE CASCADE). Ao
+      // contrário das contas, investimentos não têm lançamentos digitados à
+      // mão pra preservar (os manuais têm bank_connection_id null desde a
+      // criação, então nunca caem aqui) — sempre apaga.
+      const { error: investmentError } = await context.supabase
+        .from("investments")
+        .delete()
+        .in(
+          "id",
+          orphanedInvestments.map((i) => i.id),
+        );
+      if (investmentError) throw new Error(investmentError.message);
     }
 
     const { error: deleteError } = await context.supabase
