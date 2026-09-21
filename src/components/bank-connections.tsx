@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Landmark, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  CheckCircle2,
+  KeyRound,
+  Landmark,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,14 +23,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   createPluggyConnectToken,
   deleteBankConnection,
   discoverPluggyItems,
+  fetchPluggyItemsInfo,
   registerBankConnection,
   savePluggyCredentials,
   syncBankConnection,
+  type PluggyItemInfo,
 } from "@/lib/pluggy.functions";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -166,6 +184,79 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     await registerBankConnection({ data: { pluggyItemId } });
   }
 
+  // Tela de escolha (Conectar novo banco → item já existe / Buscar itens
+  // automaticamente): mostra os itens encontrados pra marcar quais conectar,
+  // pré-marcando só os que ainda não estão na lista de conexões.
+  const [picker, setPicker] = useState<{ items: PluggyItemInfo[]; selected: Set<string> } | null>(
+    null,
+  );
+  const [connectProgress, setConnectProgress] = useState<{
+    current: number;
+    total: number;
+    results: { id: string; name: string; ok: boolean; error?: string }[];
+  } | null>(null);
+
+  function openPicker(items: PluggyItemInfo[]) {
+    setPicker({
+      items,
+      selected: new Set(items.filter((i) => !i.alreadyConnected).map((i) => i.id)),
+    });
+  }
+  function toggleItem(id: string, checked: boolean) {
+    setPicker((p) => {
+      if (!p) return p;
+      const next = new Set(p.selected);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return { ...p, selected: next };
+    });
+  }
+  function closePicker() {
+    setPicker(null);
+    setConnectProgress(null);
+  }
+  async function connectSelected() {
+    if (!picker) return;
+    const chosen = picker.items.filter((i) => picker.selected.has(i.id));
+    if (!chosen.length) return;
+    setConnectProgress({ current: 0, total: chosen.length, results: [] });
+    for (let i = 0; i < chosen.length; i++) {
+      const item = chosen[i]!;
+      try {
+        await registerExistingItem(item.id);
+        setConnectProgress((p) =>
+          p
+            ? {
+                ...p,
+                current: i + 1,
+                results: [...p.results, { id: item.id, name: item.name, ok: true }],
+              }
+            : p,
+        );
+      } catch (error) {
+        setConnectProgress((p) =>
+          p
+            ? {
+                ...p,
+                current: i + 1,
+                results: [
+                  ...p.results,
+                  {
+                    id: item.id,
+                    name: item.name,
+                    ok: false,
+                    error: error instanceof Error ? error.message : "falha desconhecida",
+                  },
+                ],
+              }
+            : p,
+        );
+      }
+    }
+    await load();
+    onSynced();
+  }
+
   async function connectNewBank() {
     setConnecting(true);
     try {
@@ -195,25 +286,38 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
         },
         onError: (error) => {
           // A Pluggy recusa criar um item novo quando já existe outro com as
-          // mesmas credenciais (ITEM_USER_ALREADY_EXISTS) e devolve os ids
-          // dos itens existentes; em vez de falhar, reaproveitamos um deles.
+          // mesmas credenciais (ITEM_USER_ALREADY_EXISTS) e devolve só os ids
+          // dos itens existentes, sem nome — busca os detalhes de cada um e
+          // deixa o usuário escolher quais conectar, em vez de escolher por
+          // ele.
           const details = error as { message?: string; data?: { items?: string[] } };
-          const existingItemId = details?.data?.items?.at(-1);
-          if (details?.message === "ITEM_USER_ALREADY_EXISTS" && existingItemId) {
-            void registerExistingItem(existingItemId)
-              .then(async () => {
-                toast.success("Conexão existente reaproveitada! Sincronizando lançamentos…");
-                await load();
-                onSynced();
-              })
-              .catch((registerError) => {
+          const existingIds = details?.data?.items ?? [];
+          if (details?.message === "ITEM_USER_ALREADY_EXISTS" && existingIds.length) {
+            void (async () => {
+              try {
+                const { items } = await fetchPluggyItemsInfo({ data: { itemIds: existingIds } });
+                if (items.length) {
+                  openPicker(items);
+                } else {
+                  // Nenhum detalhe disponível (ids podem ter expirado) —
+                  // ainda assim tenta reaproveitar o mais recente.
+                  const lastId = existingIds.at(-1);
+                  if (lastId) {
+                    await registerExistingItem(lastId);
+                    toast.success("Conexão existente reaproveitada! Sincronizando lançamentos…");
+                    await load();
+                    onSynced();
+                  }
+                }
+              } catch (fetchError) {
+                console.error(fetchError);
                 toast.error(
-                  registerError instanceof Error
-                    ? registerError.message
-                    : "Falha ao reaproveitar conexão existente.",
+                  "Já existe uma conexão com essas credenciais, mas não consegui listar os itens existentes.",
                 );
-              })
-              .finally(() => setConnecting(false));
+              } finally {
+                setConnecting(false);
+              }
+            })();
             return;
           }
           console.error(error);
@@ -264,23 +368,12 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
   async function discoverItems() {
     setDiscovering(true);
     try {
-      const result = await discoverPluggyItems();
-      if (!result.total) {
+      const { items } = await discoverPluggyItems();
+      if (!items.length) {
         toast.error("Nenhum item encontrado na Pluggy pra essas credenciais.");
         return;
       }
-      if (result.succeeded) {
-        toast.success(
-          `${result.succeeded} de ${result.total} item(ns) registrado(s) e sincronizando.`,
-        );
-        await load();
-        onSynced();
-      }
-      if (result.failures.length) {
-        toast.error(
-          `Falhou em ${result.failures.length}: ${result.failures.map((f) => `${f.id}: ${f.message}`).join(" · ")}`,
-        );
-      }
+      openPicker(items);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Falha ao buscar itens automaticamente.",
@@ -440,7 +533,8 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-3">
               <div className="flex-1 text-xs text-muted-foreground">
                 Já existem itens conectados direto pela Pluggy (dashboard deles, sandbox etc.)?
-                Busca todos automaticamente e registra de uma vez, sem colar ID por ID.
+                Busca todos automaticamente e deixa você escolher quais conectar, sem colar ID por
+                ID.
               </div>
               <Button
                 type="button"
@@ -576,6 +670,96 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
           )}
         </>
       )}
+
+      <Dialog
+        open={!!picker}
+        onOpenChange={(open) => {
+          if (open) return;
+          // Trava o fechamento enquanto tá conectando um por um, pra não
+          // perder o acompanhamento no meio.
+          if (connectProgress && connectProgress.current < connectProgress.total) return;
+          closePicker();
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          {!connectProgress ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Escolha o que conectar</DialogTitle>
+                <DialogDescription>
+                  Encontramos {picker?.items.length ?? 0} item(ns) na Pluggy. Marque os que quiser
+                  conectar — os já conectados vêm desmarcados.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="max-h-64 space-y-1 overflow-y-auto">
+                {picker?.items.map((item) => (
+                  <label
+                    key={item.id}
+                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--primary)]"
+                      checked={picker.selected.has(item.id)}
+                      onChange={(e) => toggleItem(item.id, e.target.checked)}
+                    />
+                    <span className="flex-1">{item.name}</span>
+                    {item.alreadyConnected && (
+                      <span className="text-xs text-muted-foreground">já conectado</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              <Button onClick={() => void connectSelected()} disabled={!picker?.selected.size}>
+                Conectar {picker?.selected.size ?? 0} selecionado(s)
+              </Button>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {connectProgress.current >= connectProgress.total
+                    ? `Concluído — ${connectProgress.results.filter((r) => r.ok).length} de ${connectProgress.total} conectado(s)`
+                    : `Conectando ${connectProgress.current + 1} de ${connectProgress.total}`}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${(connectProgress.current / connectProgress.total) * 100}%` }}
+                />
+              </div>
+              <ul className="mt-1 max-h-64 space-y-1 overflow-y-auto text-sm">
+                {(picker?.items.filter((i) => picker.selected.has(i.id)) ?? []).map((item, idx) => {
+                  const result = connectProgress.results.find((r) => r.id === item.id);
+                  return (
+                    <li key={item.id} className="flex items-center gap-2">
+                      {result ? (
+                        result.ok ? (
+                          <CheckCircle2 className="size-4 flex-none text-income" />
+                        ) : (
+                          <XCircle className="size-4 flex-none text-destructive" />
+                        )
+                      ) : idx === connectProgress.current ? (
+                        <Loader2 className="size-4 flex-none animate-spin text-muted-foreground" />
+                      ) : (
+                        <span className="size-4 flex-none" />
+                      )}
+                      <span className="flex-1">{item.name}</span>
+                      {result && !result.ok && (
+                        <span className="text-xs text-destructive">{result.error}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {connectProgress.current >= connectProgress.total && (
+                <Button onClick={closePicker}>Concluir</Button>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent>
