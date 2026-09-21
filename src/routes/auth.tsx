@@ -60,7 +60,15 @@ function AuthPage() {
       const { data, error: err } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { display_name: displayName }, emailRedirectTo: window.location.origin },
+        options: {
+          data: { display_name: displayName },
+          // Se veio de um link de convite, o e-mail de confirmação precisa
+          // trazer a pessoa de volta pra ele — sem isso, confirmar o e-mail
+          // manda pro dashboard normal e o convite nunca é aceito.
+          emailRedirectTo: redirectTo
+            ? `${window.location.origin}${redirectTo}`
+            : window.location.origin,
+        },
       });
       if (err) setError(err.message);
       else if (!data.session) setMessage("Conta criada. Confirme seu e-mail para continuar.");
@@ -75,7 +83,9 @@ function AuthPage() {
   async function google() {
     setError("");
     const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
+      // Mesmo motivo do e-mail de confirmação: sem isso, quem vem de um
+      // convite volta pro dashboard normal em vez do convite depois do OAuth.
+      redirect_uri: redirectTo ? `${window.location.origin}${redirectTo}` : window.location.origin,
     });
     if (result.error) setError(result.error.message);
     else if (!result.redirected) goToApp();
