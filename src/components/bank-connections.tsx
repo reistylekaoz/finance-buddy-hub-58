@@ -412,6 +412,52 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     }
   }
 
+  // Experimental: abre o widget da Pluggy em modo "atualizar item existente"
+  // (passando o itemId já conectado) em vez do modo normal de criar um item
+  // novo — testando se isso evita o ITEM_USER_ALREADY_EXISTS de vez, sem
+  // depender do seletor de recuperação.
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  async function updateConnection(connection: BankConnection) {
+    setUpdatingId(connection.id);
+    try {
+      await loadPluggyWidget();
+      const { connectToken } = await createPluggyConnectToken({
+        data: { oauthRedirectUrl: window.location.href, itemId: connection.pluggy_item_id },
+      });
+      if (!window.PluggyConnect) throw new Error("Widget da Pluggy indisponível.");
+      const widget = new window.PluggyConnect({
+        connectToken,
+        includeSandbox: true,
+        onSuccess: () => {
+          void (async () => {
+            try {
+              await registerExistingItem(connection.pluggy_item_id);
+              toast.success("Conexão atualizada! Sincronizando lançamentos…");
+              await load();
+              onSynced();
+            } catch (error) {
+              toast.error(
+                error instanceof Error ? error.message : "Falha ao sincronizar após atualizar.",
+              );
+            } finally {
+              setUpdatingId(null);
+            }
+          })();
+        },
+        onError: (error) => {
+          console.error(error);
+          toast.error("Não foi possível atualizar essa conexão.");
+          setUpdatingId(null);
+        },
+        onClose: () => setUpdatingId(null),
+      });
+      widget.init();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao iniciar a atualização.");
+      setUpdatingId(null);
+    }
+  }
+
   async function performDelete() {
     if (!pendingDelete) return;
     setDeleting(true);
@@ -665,6 +711,20 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                           <RefreshCw />
                         )}
                         {throttled ? `Disponível em ${hoursRemaining}h` : "Sincronizar agora"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void updateConnection(connection)}
+                        disabled={updatingId === connection.id}
+                        title="Experimental: abre o conector em modo atualização, pra reautenticar essa mesma conexão"
+                      >
+                        {updatingId === connection.id ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <KeyRound />
+                        )}
+                        Atualizar conexão
                       </Button>
                       <Button
                         variant="ghost"
