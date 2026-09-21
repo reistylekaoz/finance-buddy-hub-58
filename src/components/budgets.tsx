@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Pencil, Plus, Target, Trash2 } from "lucide-react";
+import { ChevronRight, Loader2, Pencil, Plus, Target, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,18 @@ type Budget = Database["public"]["Tables"]["budgets"]["Row"];
 type BudgetRecipient = Database["public"]["Tables"]["budget_recipients"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type Account = Database["public"]["Tables"]["accounts"]["Row"];
+type CreditCard = Database["public"]["Tables"]["credit_cards"]["Row"];
 type TelegramRecipient = Database["public"]["Tables"]["telegram_recipients"]["Row"];
+
+type ScopeType = "category" | "cost_center" | "account" | "card";
+const SCOPE_LABELS: Record<ScopeType, string> = {
+  category: "Categoria",
+  cost_center: "Centro de custo",
+  account: "Conta",
+  card: "Cartão de crédito",
+};
+const SCOPE_OPTIONS = Object.entries(SCOPE_LABELS) as [ScopeType, string][];
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const selectClass =
@@ -57,7 +68,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 type BudgetFormState = {
   name: string;
-  scope_type: "category" | "cost_center";
+  scope_type: ScopeType;
   scope_id: string;
   amount: string;
   period_type: PeriodType;
@@ -89,6 +100,8 @@ export function Budgets() {
   const [budgetRecipients, setBudgetRecipients] = useState<BudgetRecipient[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [recipients, setRecipients] = useState<TelegramRecipient[]>([]);
   const [spentByBudget, setSpentByBudget] = useState<
     Map<string, { spent: number; start: string; end: string }>
@@ -107,19 +120,30 @@ export function Budgets() {
     setLoading(true);
     const { data: auth } = await supabase.auth.getUser();
     const userId = auth.user?.id;
-    const [budgetRows, budgetRecipientRows, categoryRows, costCenterRows, recipientRows] =
-      await Promise.all([
-        supabase.from("budgets").select("*").order("created_at"),
-        supabase.from("budget_recipients").select("*"),
-        supabase.from("categories").select("*").order("name"),
-        supabase.from("cost_centers").select("*").order("name"),
-        supabase.from("telegram_recipients").select("*").order("created_at"),
-      ]);
+    const [
+      budgetRows,
+      budgetRecipientRows,
+      categoryRows,
+      costCenterRows,
+      accountRows,
+      creditCardRows,
+      recipientRows,
+    ] = await Promise.all([
+      supabase.from("budgets").select("*").order("created_at"),
+      supabase.from("budget_recipients").select("*"),
+      supabase.from("categories").select("*").order("name"),
+      supabase.from("cost_centers").select("*").order("name"),
+      supabase.from("accounts").select("*").order("name"),
+      supabase.from("credit_cards").select("*").order("name"),
+      supabase.from("telegram_recipients").select("*").order("created_at"),
+    ]);
     const budgetList = budgetRows.data ?? [];
     setBudgets(budgetList);
     setBudgetRecipients(budgetRecipientRows.data ?? []);
     setCategories(categoryRows.data ?? []);
     setCostCenters(costCenterRows.data ?? []);
+    setAccounts(accountRows.data ?? []);
+    setCreditCards(creditCardRows.data ?? []);
     setRecipients(recipientRows.data ?? []);
 
     if (userId && budgetList.length) {
@@ -148,6 +172,8 @@ export function Budgets() {
   };
   const costCenterName = (id: string | null): string =>
     costCenters.find((cc) => cc.id === id)?.name ?? "";
+  const accountName = (id: string | null): string => accounts.find((a) => a.id === id)?.name ?? "";
+  const cardName = (id: string | null): string => creditCards.find((c) => c.id === id)?.name ?? "";
 
   const recipientsByBudget = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -164,6 +190,8 @@ export function Budgets() {
     [categories],
   );
   const activeCostCenters = useMemo(() => costCenters.filter((c) => c.is_active), [costCenters]);
+  const activeAccounts = useMemo(() => accounts.filter((a) => a.is_active), [accounts]);
+  const activeCreditCards = useMemo(() => creditCards.filter((c) => c.is_active), [creditCards]);
 
   function openNew() {
     setEditingId(null);
@@ -172,10 +200,18 @@ export function Budgets() {
   }
   function openEdit(budget: Budget) {
     setEditingId(budget.id);
+    const scopeType: ScopeType = budget.category_id
+      ? "category"
+      : budget.cost_center_id
+        ? "cost_center"
+        : budget.account_id
+          ? "account"
+          : "card";
     setForm({
       name: budget.name,
-      scope_type: budget.category_id ? "category" : "cost_center",
-      scope_id: budget.category_id ?? budget.cost_center_id ?? "",
+      scope_type: scopeType,
+      scope_id:
+        budget.category_id ?? budget.cost_center_id ?? budget.account_id ?? budget.card_id ?? "",
       amount: String(budget.amount),
       period_type: budget.period_type as PeriodType,
       start_date: budget.start_date,
@@ -200,7 +236,9 @@ export function Budgets() {
   async function saveBudget(e: React.FormEvent) {
     e.preventDefault();
     if (!form.scope_id) {
-      toast.error("Escolha uma categoria ou centro de custo.");
+      toast.error(
+        `Selecione ${SCOPE_LABELS[form.scope_type].toLowerCase()} para aplicar o orçamento.`,
+      );
       return;
     }
     if (form.period_type === "fixed" && !form.end_date) {
@@ -219,6 +257,8 @@ export function Budgets() {
       name: form.name,
       category_id: form.scope_type === "category" ? form.scope_id : null,
       cost_center_id: form.scope_type === "cost_center" ? form.scope_id : null,
+      account_id: form.scope_type === "account" ? form.scope_id : null,
+      card_id: form.scope_type === "card" ? form.scope_id : null,
       amount: Number(form.amount || 0),
       period_type: form.period_type,
       start_date: form.start_date,
@@ -310,8 +350,8 @@ export function Budgets() {
             <Target className="mx-auto size-8 text-muted-foreground" />
             <h2 className="font-semibold">Nenhum orçamento ainda</h2>
             <p className="text-sm text-muted-foreground">
-              Crie uma meta de orçamento por categoria ou centro de custo, com período fixo ou
-              recorrente, e configure alertas por Telegram sobre o andamento.
+              Crie uma meta de orçamento por categoria, centro de custo, conta ou cartão de crédito,
+              com período fixo ou recorrente, e configure alertas por Telegram sobre o andamento.
             </p>
           </div>
         </div>
@@ -335,7 +375,11 @@ export function Budgets() {
                 : "bg-primary";
             const scopeLabel = budget.category_id
               ? categoryPath(budget.category_id)
-              : costCenterName(budget.cost_center_id);
+              : budget.cost_center_id
+                ? costCenterName(budget.cost_center_id)
+                : budget.account_id
+                  ? accountName(budget.account_id)
+                  : cardName(budget.card_id);
             const recipientCount = (recipientsByBudget.get(budget.id) ?? []).length;
             return (
               <div key={budget.id} className="rounded-lg border border-border bg-card p-5">
@@ -418,8 +462,8 @@ export function Budgets() {
           <DialogHeader>
             <DialogTitle>{editingId ? "Editar orçamento" : "Novo orçamento"}</DialogTitle>
             <DialogDescription>
-              Defina uma meta de gasto por categoria ou centro de custo e, se quiser, alertas por
-              Telegram sobre o andamento.
+              Defina uma meta de gasto por categoria, centro de custo, conta ou cartão de crédito e,
+              se quiser, alertas por Telegram sobre o andamento.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveBudget} className="space-y-4">
@@ -432,32 +476,21 @@ export function Budgets() {
               />
             </Field>
             <Field label="Aplicar a">
-              <div className="flex gap-4 text-sm">
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="scope_type"
-                    checked={form.scope_type === "category"}
-                    onChange={() =>
-                      setForm((f) => ({ ...f, scope_type: "category", scope_id: "" }))
-                    }
-                  />
-                  Categoria
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="scope_type"
-                    checked={form.scope_type === "cost_center"}
-                    onChange={() =>
-                      setForm((f) => ({ ...f, scope_type: "cost_center", scope_id: "" }))
-                    }
-                  />
-                  Centro de custo
-                </label>
+              <div className="flex flex-wrap gap-4 text-sm">
+                {SCOPE_OPTIONS.map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="scope_type"
+                      checked={form.scope_type === value}
+                      onChange={() => setForm((f) => ({ ...f, scope_type: value, scope_id: "" }))}
+                    />
+                    {label}
+                  </label>
+                ))}
               </div>
             </Field>
-            <Field label={form.scope_type === "category" ? "Categoria" : "Centro de custo"}>
+            <Field label={SCOPE_LABELS[form.scope_type]}>
               <select
                 required
                 className={selectClass}
@@ -465,17 +498,30 @@ export function Budgets() {
                 onChange={(e) => setForm((f) => ({ ...f, scope_id: e.target.value }))}
               >
                 <option value="">Selecione…</option>
-                {form.scope_type === "category"
-                  ? expenseCategories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {categoryPath(c.id)}
-                      </option>
-                    ))
-                  : activeCostCenters.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                {form.scope_type === "category" &&
+                  expenseCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {categoryPath(c.id)}
+                    </option>
+                  ))}
+                {form.scope_type === "cost_center" &&
+                  activeCostCenters.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                {form.scope_type === "account" &&
+                  activeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                {form.scope_type === "card" &&
+                  activeCreditCards.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
               </select>
             </Field>
             <Field label="Valor do orçamento">
@@ -641,5 +687,143 @@ export function Budgets() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// Versão compacta pro Dashboard: só o andamento dos orçamentos ativos, sem
+// criar/editar — quem quiser mexer clica em "Ver todos" e vai pra aba
+// Controle orçamentário de verdade.
+export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
+  const [spentByBudget, setSpentByBudget] = useState<
+    Map<string, { spent: number; start: string; end: string }>
+  >(new Map());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void (async () => {
+      setLoading(true);
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth.user?.id;
+      const [budgetRows, categoryRows, costCenterRows, accountRows, creditCardRows] =
+        await Promise.all([
+          supabase.from("budgets").select("*").eq("is_active", true).order("created_at"),
+          supabase.from("categories").select("*"),
+          supabase.from("cost_centers").select("*"),
+          supabase.from("accounts").select("*"),
+          supabase.from("credit_cards").select("*"),
+        ]);
+      const budgetList = budgetRows.data ?? [];
+      setBudgets(budgetList);
+      setCategories(categoryRows.data ?? []);
+      setCostCenters(costCenterRows.data ?? []);
+      setAccounts(accountRows.data ?? []);
+      setCreditCards(creditCardRows.data ?? []);
+      if (userId && budgetList.length) {
+        const entries = await Promise.all(
+          budgetList.map(async (b) => {
+            const period = currentBudgetPeriod(
+              b.period_type as PeriodType,
+              b.start_date,
+              b.end_date,
+            );
+            const spent = await budgetSpent(supabase, userId, b, period.start, period.end);
+            return [b.id, { spent, ...period }] as const;
+          }),
+        );
+        setSpentByBudget(new Map(entries));
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const categoryPath = (id: string | null): string => {
+    if (!id) return "";
+    const c = categories.find((cat) => cat.id === id);
+    if (!c) return "";
+    return c.parent_id ? `${categoryPath(c.parent_id)} › ${c.name}` : c.name;
+  };
+  const scopeLabel = (budget: Budget): string => {
+    if (budget.category_id) return categoryPath(budget.category_id);
+    if (budget.cost_center_id)
+      return costCenters.find((cc) => cc.id === budget.cost_center_id)?.name ?? "";
+    if (budget.account_id) return accounts.find((a) => a.id === budget.account_id)?.name ?? "";
+    return creditCards.find((c) => c.id === budget.card_id)?.name ?? "";
+  };
+
+  if (loading) return null;
+  if (!budgets.length) return null;
+
+  // Mais urgente primeiro: estourado, depois perto do limiar, depois o resto.
+  const sorted = [...budgets].sort((a, b) => {
+    const pctA =
+      Number(a.amount) > 0 ? (spentByBudget.get(a.id)?.spent ?? 0) / Number(a.amount) : 0;
+    const pctB =
+      Number(b.amount) > 0 ? (spentByBudget.get(b.id)?.spent ?? 0) / Number(b.amount) : 0;
+    return pctB - pctA;
+  });
+
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <div>
+          <h2 className="font-semibold">Controle orçamentário</h2>
+          <p className="text-xs text-muted-foreground">Andamento dos orçamentos ativos</p>
+        </div>
+        {onOpenAll && (
+          <button
+            type="button"
+            onClick={onOpenAll}
+            className="flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
+          >
+            Ver todos
+            <ChevronRight className="size-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="divide-y divide-border">
+        {sorted.map((budget) => {
+          const info = spentByBudget.get(budget.id);
+          const spent = info?.spent ?? 0;
+          const amount = Number(budget.amount);
+          const pct = amount > 0 ? Math.min(999, (spent / amount) * 100) : 0;
+          const exceeded = spent > amount;
+          const nearThreshold =
+            !exceeded &&
+            budget.alert_threshold_enabled &&
+            budget.alert_threshold_percent !== null &&
+            pct >= Number(budget.alert_threshold_percent);
+          const barColor = exceeded ? "bg-expense" : nearThreshold ? "bg-amber-500" : "bg-primary";
+          return (
+            <div key={budget.id} className="px-5 py-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <p className="min-w-0 truncate font-medium">
+                  {budget.name}{" "}
+                  <span className="text-muted-foreground">· {scopeLabel(budget)}</span>
+                </p>
+                <span
+                  className={cn(
+                    "flex-none font-mono text-xs tabular-nums",
+                    exceeded ? "text-expense" : "text-muted-foreground",
+                  )}
+                >
+                  {money.format(spent)} / {money.format(amount)}
+                </span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn("h-full transition-all", barColor)}
+                  style={{ width: `${Math.min(100, pct)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
