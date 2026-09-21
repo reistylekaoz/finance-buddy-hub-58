@@ -95,6 +95,7 @@ import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { ignoreExternalIds } from "@/lib/ignored-external-ids";
 import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";

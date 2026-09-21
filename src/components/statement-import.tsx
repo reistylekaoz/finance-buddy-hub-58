@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { triggerClass } from "@/components/ui/filters";
 import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
 import { paginate } from "@/lib/paginate";
+import { ignoreExternalIds } from "@/lib/ignored-external-ids";
 import { cn } from "@/lib/utils";
 import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
