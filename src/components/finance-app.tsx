@@ -35,6 +35,7 @@ import {
   Send,
   Settings as SettingsIcon,
   Smartphone,
+  SunMoon,
   Target,
   Trash2,
   Shapes,
@@ -1101,7 +1102,6 @@ export function FinanceApp() {
               <p className="text-xs opacity-70">Saldo consolidado</p>
               <p className="mt-1 font-mono text-lg">{money.format(totals.balance)}</p>
             </div>
-            <ThemeToggle className="mt-2 w-full" />
             <Button
               variant="ghost"
               className="mt-2 w-full justify-start text-muted-foreground"
@@ -3765,6 +3765,19 @@ function Settings({ accounts }: { accounts: Account[] }) {
 
   return (
     <div className="space-y-4">
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <SunMoon className="size-6 flex-none text-primary" />
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold">Aparência</h2>
+            <p className="text-xs text-muted-foreground">
+              Escolha entre tema claro e escuro — a preferência fica salva neste navegador.
+            </p>
+          </div>
+          <ThemeToggle />
+        </div>
+      </section>
+
       <InstallAppSection />
 
       <section className="rounded-lg border border-border bg-card p-5">

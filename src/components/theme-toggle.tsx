@@ -21,13 +21,9 @@ export function ThemeToggle({ className }: { className?: string }) {
   }
 
   return (
-    <Button
-      variant="ghost"
-      className={cn("justify-start text-muted-foreground", className)}
-      onClick={toggle}
-    >
+    <Button variant="outline" className={cn(className)} onClick={toggle}>
       {theme === "dark" ? <Sun /> : <Moon />}
-      {theme === "dark" ? "Tema claro" : "Tema escuro"}
+      {theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
     </Button>
   );
 }
