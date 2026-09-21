@@ -98,7 +98,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
-import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
+import darkModeLogo from "@/assets/fluxora-logo-sidebar-dark.png.asset.json";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
@@ -1080,7 +1080,7 @@ export function FinanceApp() {
         >
           <div className="flex items-center justify-between px-2 py-2">
             <img
-              src={lightLogo.url}
+              src={darkModeLogo.url}
               alt="Fluxora — Gestão financeira inteligente"
               className="h-auto w-40"
             />
