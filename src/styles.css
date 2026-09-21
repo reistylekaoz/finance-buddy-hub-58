@@ -35,6 +35,37 @@
   --radius: 0.45rem;
 }
 
+.dark {
+  --background: oklch(0.17 0.014 55);
+  --foreground: oklch(0.94 0.012 70);
+  --card: oklch(0.215 0.016 55);
+  --card-foreground: oklch(0.94 0.012 70);
+  --popover: oklch(0.215 0.016 55);
+  --popover-foreground: oklch(0.94 0.012 70);
+  --primary: oklch(0.634 0.181 41.1);
+  --primary-foreground: oklch(0.17 0.014 55);
+  --primary-soft: oklch(0.32 0.06 45);
+  --primary-light: oklch(0.78 0.135 60);
+  --secondary: oklch(0.657 0.177 52.5);
+  --secondary-foreground: oklch(0.17 0.014 55);
+  --muted: oklch(0.26 0.018 55);
+  --muted-foreground: oklch(0.66 0.02 65);
+  --accent: oklch(0.32 0.05 60);
+  --accent-foreground: oklch(0.94 0.012 70);
+  --destructive: oklch(0.62 0.19 25);
+  --destructive-foreground: oklch(0.98 0.01 75);
+  --destructive-soft: oklch(0.3 0.06 25);
+  --income: oklch(0.62 0.14 150);
+  --income-soft: oklch(0.27 0.05 150);
+  --expense: oklch(0.65 0.17 25);
+  --expense-soft: oklch(0.28 0.05 25);
+  --border: oklch(0.32 0.02 55);
+  --input: oklch(0.32 0.02 55);
+  --ring: oklch(0.634 0.181 41.1);
+  --sidebar: oklch(0.2 0.016 55);
+  --overlay: oklch(0.05 0.01 55 / 0.6);
+}
+
 @theme inline {
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces", ui-serif, Georgia, serif;

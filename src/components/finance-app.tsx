@@ -83,6 +83,7 @@ import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
 import { Investments } from "@/components/investments";
 import { Budgets, BudgetsPanel } from "@/components/budgets";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { DashboardCustomizer } from "@/components/dashboard-customizer";
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder, type WidgetId } from "@/lib/dashboard-widgets";
 import { BankConnections } from "@/components/bank-connections";
@@ -1100,6 +1101,7 @@ export function FinanceApp() {
               <p className="text-xs opacity-70">Saldo consolidado</p>
               <p className="mt-1 font-mono text-lg">{money.format(totals.balance)}</p>
             </div>
+            <ThemeToggle className="mt-2 w-full" />
             <Button
               variant="ghost"
               className="mt-2 w-full justify-start text-muted-foreground"
