@@ -1,5 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FinanceApp } from "@/components/finance-app";
+import { ActiveProfileProvider } from "@/components/active-profile";
+
+function DashboardRoute() {
+  return (
+    <ActiveProfileProvider>
+      <FinanceApp />
+    </ActiveProfileProvider>
+  );
+}
+
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
     meta: [
@@ -14,5 +24,5 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  component: FinanceApp,
+  component: DashboardRoute,
 });
