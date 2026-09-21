@@ -79,54 +79,6 @@ export type Database = {
           },
         ]
       }
-      account_members: {
-        Row: {
-          accepted_at: string | null
-          can_edit: boolean
-          can_manage_connections: boolean
-          can_manage_members: boolean
-          created_at: string
-          email: string
-          id: string
-          invite_token: string
-          invited_at: string
-          member_user_id: string | null
-          owner_user_id: string
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          accepted_at?: string | null
-          can_edit?: boolean
-          can_manage_connections?: boolean
-          can_manage_members?: boolean
-          created_at?: string
-          email: string
-          id?: string
-          invite_token?: string
-          invited_at?: string
-          member_user_id?: string | null
-          owner_user_id: string
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          accepted_at?: string | null
-          can_edit?: boolean
-          can_manage_connections?: boolean
-          can_manage_members?: boolean
-          created_at?: string
-          email?: string
-          id?: string
-          invite_token?: string
-          invited_at?: string
-          member_user_id?: string | null
-          owner_user_id?: string
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       assets: {
         Row: {
           asset_class: string
@@ -749,7 +701,6 @@ export type Database = {
       }
       profiles: {
         Row: {
-          active_filters: Json | null
           created_at: string
           dashboard_filters: Json | null
           dashboard_widgets: Json | null
@@ -761,7 +712,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          active_filters?: Json | null
           created_at?: string
           dashboard_filters?: Json | null
           dashboard_widgets?: Json | null
@@ -773,7 +723,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          active_filters?: Json | null
           created_at?: string
           dashboard_filters?: Json | null
           dashboard_widgets?: Json | null
@@ -1016,22 +965,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      accept_account_invite: {
-        Args: { p_token: string }
-        Returns: string
-      }
-      has_account_access: {
-        Args: { target_user_id: string; require_edit?: boolean }
-        Returns: boolean
-      }
-      has_connections_access: {
-        Args: { target_user_id: string }
-        Returns: boolean
-      }
-      has_members_access: {
-        Args: { target_user_id: string }
-        Returns: boolean
-      }
+      [_ in never]: never
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"
