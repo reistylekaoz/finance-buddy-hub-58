@@ -796,53 +796,91 @@ export const registerBankConnection = createServerFn({ method: "POST" })
 // deles pra cada conta) — por isso segue com uma mensagem clara em vez de
 // travar a tela quando não está disponível, deixando o registro manual de
 // IDs como alternativa.
-async function fetchAllPluggyItemIds(credentials: PluggyCredentials): Promise<string[]> {
-  const ids: string[] = [];
+async function fetchAllPluggyItems(credentials: PluggyCredentials): Promise<PluggyItem[]> {
+  const items: PluggyItem[] = [];
   let after: string | undefined;
   for (;;) {
     const params = new URLSearchParams(after ? { after } : {});
-    const data = await pluggyFetch<{ results: { id: string }[]; next: string | null }>(
+    const data = await pluggyFetch<{ results: PluggyItem[]; next: string | null }>(
       credentials,
       `/v2/items?${params.toString()}`,
     );
-    ids.push(...data.results.map((r) => r.id));
+    items.push(...data.results);
     if (!data.next) break;
     const nextAfter = new URL(data.next, PLUGGY_BASE_URL).searchParams.get("after");
     if (!nextAfter) break;
     after = nextAfter;
   }
-  return ids;
+  return items;
 }
 
-// Busca todos os itens já existentes na Pluggy pro clientId do usuário e
-// registra/sincroniza cada um, sem precisar colar ID por ID manualmente.
+export type PluggyItemInfo = {
+  id: string;
+  name: string;
+  status: string;
+  alreadyConnected: boolean;
+};
+
+async function markAlreadyConnected(
+  supabase: Db,
+  items: { id: string; name: string; status: string }[],
+): Promise<PluggyItemInfo[]> {
+  if (!items.length) return [];
+  const { data: connected } = await supabase
+    .from("bank_connections")
+    .select("pluggy_item_id")
+    .in(
+      "pluggy_item_id",
+      items.map((i) => i.id),
+    );
+  const connectedIds = new Set((connected ?? []).map((c) => c.pluggy_item_id));
+  return items.map((item) => ({ ...item, alreadyConnected: connectedIds.has(item.id) }));
+}
+
+// Lista os itens já existentes na Pluggy pro clientId do usuário, pra
+// escolher na hora quais conectar (em vez de registrar tudo de uma vez sem
+// perguntar) — os já conectados aqui aparecem marcados/pré-desmarcados.
 export const discoverPluggyItems = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
-    let itemIds: string[];
+    let items: PluggyItem[];
     try {
-      itemIds = await fetchAllPluggyItemIds(credentials);
+      items = await fetchAllPluggyItems(credentials);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
         `Não foi possível listar os itens automaticamente. O recurso de listagem (GET /v2/items) é opt-in na Pluggy — pode ser preciso pedir pro suporte deles habilitar pra sua conta. Cole os IDs manualmente enquanto isso. Detalhe: ${message}`,
       );
     }
-    let succeeded = 0;
-    const failures: { id: string; message: string }[] = [];
-    for (const itemId of itemIds) {
-      try {
-        await registerAndSyncItem(context.supabase, context.userId, credentials, itemId);
-        succeeded += 1;
-      } catch (error) {
-        failures.push({
-          id: itemId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    return { total: itemIds.length, succeeded, failures };
+    const info = items.map((item) => ({
+      id: item.id,
+      name: item.connector?.name ?? item.id,
+      status: item.status,
+    }));
+    return { items: await markAlreadyConnected(context.supabase, info) };
+  });
+
+// Busca os detalhes (nome do banco etc.) de uma lista específica de ids —
+// usado quando a Pluggy recusa criar um item novo por já existir outro com
+// as mesmas credenciais (ITEM_USER_ALREADY_EXISTS) e devolve só os ids no
+// corpo do erro, sem nome nenhum; ids que não existem mais são ignorados.
+export const fetchPluggyItemsInfo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { itemIds: string[] }) => input)
+  .handler(async ({ context, data }) => {
+    const credentials = await getUserPluggyCredentials(context.userId);
+    const results = await Promise.allSettled(
+      data.itemIds.map((id) => pluggyFetch<PluggyItem>(credentials, `/items/${id}`)),
+    );
+    const items = results
+      .filter((r): r is PromiseFulfilledResult<PluggyItem> => r.status === "fulfilled")
+      .map((r) => ({
+        id: r.value.id,
+        name: r.value.connector?.name ?? r.value.id,
+        status: r.value.status,
+      }));
+    return { items: await markAlreadyConnected(context.supabase, items) };
   });
 
 // Bloqueia sincronização manual repetida antes desse intervalo; a
