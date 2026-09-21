@@ -233,11 +233,13 @@ export type Database = {
       }
       budgets: {
         Row: {
+          account_id: string | null
           alert_daily_report: boolean
           alert_exceeded_enabled: boolean
           alert_threshold_enabled: boolean
           alert_threshold_percent: number | null
           amount: number
+          card_id: string | null
           category_id: string | null
           cost_center_id: string | null
           created_at: string
@@ -251,11 +253,13 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           alert_daily_report?: boolean
           alert_exceeded_enabled?: boolean
           alert_threshold_enabled?: boolean
           alert_threshold_percent?: number | null
           amount: number
+          card_id?: string | null
           category_id?: string | null
           cost_center_id?: string | null
           created_at?: string
@@ -269,11 +273,13 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_id?: string | null
           alert_daily_report?: boolean
           alert_exceeded_enabled?: boolean
           alert_threshold_enabled?: boolean
           alert_threshold_percent?: number | null
           amount?: number
+          card_id?: string | null
           category_id?: string | null
           cost_center_id?: string | null
           created_at?: string
@@ -287,6 +293,20 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "budgets_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budgets_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "credit_cards"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "budgets_category_id_fkey"
             columns: ["category_id"]
