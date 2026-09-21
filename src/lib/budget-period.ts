@@ -79,11 +79,15 @@ export function currentBudgetPeriod(
 type BudgetScope = {
   category_id: string | null;
   cost_center_id: string | null;
+  account_id: string | null;
+  card_id: string | null;
 };
 
-// Soma dos lançamentos bancários (só despesa confirmada) + de cartão de
-// crédito dentro da janela do período, batendo com a categoria OU o centro
-// de custo do orçamento. Usado tanto na tela (cliente) quanto no disparo de
+// Soma dos lançamentos dentro da janela do período, batendo com o escopo do
+// orçamento. Categoria e centro de custo somam despesa bancária confirmada
+// + compras de cartão que batam com a categoria/centro; conta soma só
+// despesa bancária confirmada daquela conta; cartão soma só as compras
+// daquele cartão. Usado tanto na tela (cliente) quanto no disparo de
 // alertas (cron, com supabaseAdmin) — mesma assinatura de cliente Supabase
 // nos dois casos.
 export async function budgetSpent(
@@ -93,6 +97,29 @@ export async function budgetSpent(
   periodStart: string,
   periodEnd: string,
 ): Promise<number> {
+  if (scope.account_id) {
+    const { data } = await supabase
+      .from("transactions")
+      .select("amount")
+      .eq("user_id", userId)
+      .eq("account_id", scope.account_id)
+      .eq("transaction_type", "expense")
+      .eq("status", "confirmed")
+      .gte("transaction_date", periodStart)
+      .lte("transaction_date", periodEnd);
+    return (data ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
+  }
+  if (scope.card_id) {
+    const { data } = await supabase
+      .from("credit_card_transactions")
+      .select("amount")
+      .eq("user_id", userId)
+      .eq("card_id", scope.card_id)
+      .gte("purchase_date", periodStart)
+      .lte("purchase_date", periodEnd);
+    return (data ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
+  }
+
   let bankQuery = supabase
     .from("transactions")
     .select("amount")

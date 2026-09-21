@@ -961,7 +961,12 @@ export async function sendDailyDigests(supabaseAdmin: Db): Promise<{ sent: numbe
 
 async function budgetScopeLabel(
   supabaseAdmin: Db,
-  budget: { category_id: string | null; cost_center_id: string | null },
+  budget: {
+    category_id: string | null;
+    cost_center_id: string | null;
+    account_id: string | null;
+    card_id: string | null;
+  },
 ): Promise<string> {
   if (budget.category_id) {
     const { data } = await supabaseAdmin
@@ -978,6 +983,22 @@ async function budgetScopeLabel(
       .eq("id", budget.cost_center_id)
       .maybeSingle();
     return data?.name ?? "centro de custo";
+  }
+  if (budget.account_id) {
+    const { data } = await supabaseAdmin
+      .from("accounts")
+      .select("name")
+      .eq("id", budget.account_id)
+      .maybeSingle();
+    return data?.name ?? "conta";
+  }
+  if (budget.card_id) {
+    const { data } = await supabaseAdmin
+      .from("credit_cards")
+      .select("name")
+      .eq("id", budget.card_id)
+      .maybeSingle();
+    return data?.name ?? "cartão";
   }
   return "";
 }

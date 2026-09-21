@@ -82,7 +82,7 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
 import { Investments } from "@/components/investments";
-import { Budgets } from "@/components/budgets";
+import { Budgets, BudgetsPanel } from "@/components/budgets";
 import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
@@ -1112,6 +1112,7 @@ export function FinanceApp() {
                   onEditTx={(tx: Transaction) => edit("transaction", tx)}
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                   onConfirmTx={openConfirmProvision}
+                  onOpenBudgets={() => setView("budgets")}
                 />
               )}
               {view === "accounts" && (
@@ -1795,6 +1796,7 @@ function Dashboard({
   onEditTx,
   onDeleteTx,
   onConfirmTx,
+  onOpenBudgets,
 }: {
   totals: {
     balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
@@ -1823,6 +1825,7 @@ function Dashboard({
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
   onConfirmTx: (tx: Transaction) => void;
+  onOpenBudgets: () => void;
 }) {
   const periodPresets: PeriodPreset[] = [
     {
@@ -2123,6 +2126,8 @@ function Dashboard({
           </div>
         )}
       </section>
+
+      <BudgetsPanel onOpenAll={onOpenBudgets} />
 
       {/* Previsões: o que já venceu (precisa de atenção) e o que ainda vem
           este mês — clicar expande a lista, e cada lançamento dá pra
