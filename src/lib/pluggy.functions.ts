@@ -718,45 +718,35 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
 
 export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { oauthRedirectUrl: string; itemId?: string }) => input)
+  .validator((input: { oauthRedirectUrl: string }) => input)
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
     // avoidDuplicates: true fazia a Pluggy VALIDAR as credenciais antes de
     // sequer abrir o fluxo de autenticação, e recusar de cara com
     // ITEM_USER_ALREADY_EXISTS quando já existe um item igual — era
     // literalmente essa flag que travava a reconexão em vez de deixar o
-    // próprio widget negociar isso nativamente com o usuário. Removida:
-    // sem ela, a Pluggy deixa o fluxo normal do widget seguir, que já sabe
-    // lidar com "esse item já existe" sem precisar de um erro pra nosso
-    // código interceptar.
-    //
-    // Passar itemId (raiz do corpo, fora de "options") põe o widget em modo
-    // "atualizar item existente" em vez de criar um novo.
-    const body: Record<string, unknown> = data.itemId
-      ? {
-          itemId: data.itemId,
-          options: { oauthRedirectUrl: data.oauthRedirectUrl },
-        }
-      : {
-          options: {
-            clientUserId: context.userId,
-            // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy)
-            // fazem um redirecionamento de ida e volta para autorizar o
-            // acesso; sem essa URL a Pluggy não sabe pra onde trazer o
-            // usuário de volta e o fluxo falha com um erro genérico.
-            oauthRedirectUrl: data.oauthRedirectUrl,
-          },
-        };
+    // próprio widget negociar isso nativamente com o usuário. Sem ela, o
+    // widget lida com "esse item já existe" sozinho, sem precisar de um
+    // seletor por cima do erro pra funcionar no dia a dia.
     const result = await pluggyFetch<{ accessToken: string }>(credentials, "/connect_token", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        options: {
+          clientUserId: context.userId,
+          // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy)
+          // fazem um redirecionamento de ida e volta para autorizar o
+          // acesso; sem essa URL a Pluggy não sabe pra onde trazer o
+          // usuário de volta e o fluxo falha com um erro genérico.
+          oauthRedirectUrl: data.oauthRedirectUrl,
+        },
+      }),
     });
     return { connectToken: result.accessToken };
   });
 
-// Extraído de registerBankConnection pra ser reaproveitado também pela
-// descoberta automática de itens (discoverPluggyItems), que registra vários
-// de uma vez.
+// Extraído de registerBankConnection pra ser reaproveitado também pelo
+// registro manual de itens (registerManualItems, na tela de Conexões
+// bancárias) e pela recuperação via ITEM_USER_ALREADY_EXISTS.
 async function registerAndSyncItem(
   supabase: Db,
   userId: string,
@@ -808,28 +798,6 @@ export const registerBankConnection = createServerFn({ method: "POST" })
     return registerAndSyncItem(context.supabase, context.userId, credentials, data.pluggyItemId);
   });
 
-// GET /v2/items é opt-in na Pluggy (precisa ser habilitado pelo suporte
-// deles pra cada conta) — por isso segue com uma mensagem clara em vez de
-// travar a tela quando não está disponível, deixando o registro manual de
-// IDs como alternativa.
-async function fetchAllPluggyItems(credentials: PluggyCredentials): Promise<PluggyItem[]> {
-  const items: PluggyItem[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const params = new URLSearchParams(after ? { after } : {});
-    const data = await pluggyFetch<{ results: PluggyItem[]; next: string | null }>(
-      credentials,
-      `/v2/items?${params.toString()}`,
-    );
-    items.push(...data.results);
-    if (!data.next) break;
-    const nextAfter = new URL(data.next, PLUGGY_BASE_URL).searchParams.get("after");
-    if (!nextAfter) break;
-    after = nextAfter;
-  }
-  return items;
-}
-
 export type PluggyItemInfo = {
   id: string;
   name: string;
@@ -852,30 +820,6 @@ async function markAlreadyConnected(
   const connectedIds = new Set((connected ?? []).map((c) => c.pluggy_item_id));
   return items.map((item) => ({ ...item, alreadyConnected: connectedIds.has(item.id) }));
 }
-
-// Lista os itens já existentes na Pluggy pro clientId do usuário, pra
-// escolher na hora quais conectar (em vez de registrar tudo de uma vez sem
-// perguntar) — os já conectados aqui aparecem marcados/pré-desmarcados.
-export const discoverPluggyItems = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const credentials = await getUserPluggyCredentials(context.userId);
-    let items: PluggyItem[];
-    try {
-      items = await fetchAllPluggyItems(credentials);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Não foi possível listar os itens automaticamente. O recurso de listagem (GET /v2/items) é opt-in na Pluggy — pode ser preciso pedir pro suporte deles habilitar pra sua conta. Cole os IDs manualmente enquanto isso. Detalhe: ${message}`,
-      );
-    }
-    const info = items.map((item) => ({
-      id: item.id,
-      name: item.connector?.name ?? item.id,
-      status: item.status,
-    }));
-    return { items: await markAlreadyConnected(context.supabase, info) };
-  });
 
 // Busca os detalhes (nome do banco etc.) de uma lista específica de ids —
 // usado quando a Pluggy recusa criar um item novo por já existir outro com
@@ -953,12 +897,6 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
 
-    // TODO(produção): antes de ir pra produção, volte a remover o item do
-    // lado da Pluggy também (pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`,
-    // { method: "DELETE" })). Desligado agora porque, em desenvolvimento,
-    // isso obriga reconectar do zero na Pluggy a cada teste — só queremos
-    // limpar os dados locais.
-
     // accounts/credit_cards.bank_connection_id é ON DELETE SET NULL (não
     // CASCADE): apagar a conexão sem isso os deixaria órfãos — reaproveitados
     // (com todo o histórico antigo) na próxima reconexão, em vez de recriados
@@ -1023,5 +961,24 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
       .delete()
       .eq("id", connection.id);
     if (deleteError) throw new Error(deleteError.message);
+
+    // Revoga o acesso de verdade removendo o item do lado da Pluggy também
+    // — sem isso ele continua ativo lá (sincronizando e ocupando limite da
+    // conta), mesmo já tendo sumido daqui. Não bloqueia a exclusão local se
+    // falhar (o item pode já ter sido removido por lá, por exemplo).
+    try {
+      const credentials = await getUserPluggyCredentials(context.userId);
+      await pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`, {
+        method: "DELETE",
+      });
+    } catch (pluggyError) {
+      const message = pluggyError instanceof Error ? pluggyError.message : String(pluggyError);
+      await createSupportTicket(context.supabase, {
+        user_id: context.userId,
+        title: "Falha ao remover item na Pluggy após excluir conexão",
+        description: message,
+      });
+    }
+
     return { ok: true };
   });

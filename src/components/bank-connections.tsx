@@ -34,7 +34,6 @@ import { cn } from "@/lib/utils";
 import {
   createPluggyConnectToken,
   deleteBankConnection,
-  discoverPluggyItems,
   fetchPluggyItemsInfo,
   registerBankConnection,
   savePluggyCredentials,
@@ -72,11 +71,6 @@ type PluggyConnectInstance = { init: () => void };
 type PluggyConnectOptions = {
   connectToken: string;
   includeSandbox?: boolean;
-  // Faz o próprio widget (não só o connect_token) saber que é um modo
-  // atualização — sem isso ele se comporta como "criar item novo" mesmo
-  // com um connect_token pedido em modo update, e ainda esbarra no
-  // ITEM_USER_ALREADY_EXISTS.
-  updateItem?: string;
   onSuccess: (itemData: { item: { id: string } }) => void;
   onError?: (error: unknown) => void;
   onClose?: () => void;
@@ -189,9 +183,9 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     await registerBankConnection({ data: { pluggyItemId } });
   }
 
-  // Tela de escolha (Conectar novo banco → item já existe / Buscar itens
-  // automaticamente): mostra os itens encontrados pra marcar quais conectar,
-  // pré-marcando só os que ainda não estão na lista de conexões.
+  // Tela de escolha, aberta quando ITEM_USER_ALREADY_EXISTS devolve a lista
+  // de itens existentes: mostra os itens encontrados pra marcar quais
+  // conectar, pré-marcando só os que ainda não estão na lista de conexões.
   const [picker, setPicker] = useState<{ items: PluggyItemInfo[]; selected: Set<string> } | null>(
     null,
   );
@@ -262,17 +256,12 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     onSynced();
   }
 
-  // Função única do fluxo do widget: sem itemId, pede o connect_token em
-  // modo "criar item novo" (Conectar novo banco); com itemId, pede em modo
-  // "atualizar item existente" (Teste de update) — só muda o que é passado
-  // pra createPluggyConnectToken, o resto (onSuccess/onError/onClose) é
-  // idêntico nos dois casos.
-  async function openPluggyWidget(itemId?: string) {
+  async function connectNewBank() {
     setConnecting(true);
     try {
       await loadPluggyWidget();
       const { connectToken } = await createPluggyConnectToken({
-        data: { oauthRedirectUrl: window.location.href, ...(itemId ? { itemId } : {}) },
+        data: { oauthRedirectUrl: window.location.href },
       });
       if (!window.PluggyConnect) throw new Error("Widget da Pluggy indisponível.");
       const widget = new window.PluggyConnect({
@@ -280,10 +269,6 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
         // Mostra também os conectores de teste da Pluggy; troque para false
         // ao usar credenciais de produção com usuários reais.
         includeSandbox: true,
-        // O próprio widget precisa saber que é atualização, não só o
-        // connect_token — sem isso ele mostra a tela normal de "criar item
-        // novo" mesmo com um token pedido em modo update.
-        ...(itemId ? { updateItem: itemId } : {}),
         onSuccess: (itemData) => {
           void (async () => {
             try {
@@ -313,7 +298,7 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                 if (items.length) {
                   openPicker(items);
                   // Preenche o campo manual com os ids encontrados, pra
-                  // "Teste de update" já ter o que usar sem precisar caçar
+                  // "Registrar itens" já ter o que usar sem precisar caçar
                   // o Item ID em outro lugar.
                   setManualItemIds(items.map((item) => item.id).join("\n"));
                 } else {
@@ -365,31 +350,6 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     }
   }
 
-  async function connectNewBank() {
-    await openPluggyWidget();
-  }
-
-  // Botão de teste: usa a MESMA função acima, só que passando um itemId —
-  // o que muda é só a chamada ao createPluggyConnectToken (modo update em
-  // vez de criação). Sempre ativo (não depende de já ter uma conexão
-  // registrada): usa a mais recente se existir, senão cai pro primeiro ID
-  // colado no campo manual — útil justamente quando o registro normal nunca
-  // chegou a completar (o cenário do ITEM_USER_ALREADY_EXISTS).
-  async function testUpdateConnect() {
-    const pastedIds = manualItemIds
-      .split(/[\n,]/)
-      .map((id) => id.trim())
-      .filter(Boolean);
-    const targetItemId = connections[0]?.pluggy_item_id || pastedIds[0];
-    if (!targetItemId) {
-      toast.error(
-        "Cole ao menos um Item ID no campo abaixo (ou conecte um banco) pra poder testar o modo de atualização.",
-      );
-      return;
-    }
-    await openPluggyWidget(targetItemId);
-  }
-
   const [manualItemIds, setManualItemIds] = useState("");
   const [registeringManual, setRegisteringManual] = useState(false);
   async function registerManualItems() {
@@ -418,36 +378,6 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     }
     if (failures.length) {
       toast.error(`Falhou em ${failures.length}: ${failures.join(" · ")}`);
-    }
-  }
-
-  const [discovering, setDiscovering] = useState(false);
-  async function discoverItems() {
-    setDiscovering(true);
-    try {
-      const { items } = await discoverPluggyItems();
-      setDiscovering(false);
-      if (!items.length) {
-        toast.error("Nenhum item encontrado na Pluggy pra essas credenciais.");
-        return;
-      }
-      openPicker(items);
-    } catch (error) {
-      setDiscovering(false);
-      const message = error instanceof Error ? error.message : "";
-      // GET /v2/items é opt-in na Pluggy e nem toda conta tem habilitado —
-      // quando essa listagem falha por isso, a única forma de descobrir os
-      // itens já existentes é tentando conectar de novo: a Pluggy recusa
-      // com ITEM_USER_ALREADY_EXISTS e devolve os ids existentes, que o
-      // onError do widget (abaixo) já sabe transformar no mesmo seletor.
-      if (message.includes("opt-in")) {
-        toast.info(
-          "Listagem automática não habilitada nessa conta Pluggy — abrindo o conector pra localizar os itens existentes por aí.",
-        );
-        await connectNewBank();
-        return;
-      }
-      toast.error(message || "Falha ao buscar itens automaticamente.");
     }
   }
 
@@ -517,6 +447,13 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
         <ol className="mt-4 list-decimal space-y-1 rounded-md bg-muted/50 p-3 pl-8 text-xs text-muted-foreground">
           <li>
             Acesse{" "}
+            <a className="underline" href="https://meu.pluggy.ai" target="_blank" rel="noreferrer">
+              meu.pluggy.ai
+            </a>{" "}
+            e conecte suas contas bancárias por lá.
+          </li>
+          <li>
+            Depois, acesse{" "}
             <a
               className="underline"
               href="https://dashboard.pluggy.ai/applications"
@@ -526,25 +463,11 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
               dashboard.pluggy.ai/applications
             </a>
             , entre (ou crie sua conta) e abra sua aplicação — se não tiver uma, crie uma nova ali
-            mesmo.
-          </li>
-          <li>Copie o Client ID e o Client Secret dessa aplicação e cole nos campos abaixo.</li>
-          <li>
-            Pra conectar um banco, use o botão "Conectar novo banco" logo abaixo — ele já abre o
-            conector da Pluggy com a sua aplicação.
+            mesmo. Copie o Client ID e o Client Secret dela e cole nos campos abaixo.
           </li>
           <li>
-            Prefere conectar direto pela Pluggy? Acesse{" "}
-            <a className="underline" href="https://meu.pluggy.ai" target="_blank" rel="noreferrer">
-              meu.pluggy.ai
-            </a>{" "}
-            e conecte suas contas por lá. Depois, na sua aplicação em dashboard.pluggy.ai, clique no
-            ▶ (play) pra testar a conexão e conecte a todas as contas que quiser, buscando por "Meu
-            Pluggy" no lugar do nome do banco.
-          </li>
-          <li>
-            Pra cada conta conectada assim, copie o Item ID mostrado na Pluggy e cole no campo "IDs
-            de itens existentes" mais abaixo — um por linha se forem vários.
+            Pronto — é só clicar em "Conectar novo banco" logo abaixo e escolher "Meu Pluggy" na
+            lista de instituições.
           </li>
         </ol>
 
@@ -593,44 +516,15 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                   automaticamente em Contas e Cartões de crédito, sem precisar importar arquivo.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={() => void connectNewBank()} disabled={connecting}>
-                  {connecting ? <Loader2 className="animate-spin" /> : <Plus />}
-                  Conectar novo banco
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void testUpdateConnect()}
-                  disabled={connecting}
-                  title="Experimental: pede o connect_token em modo atualização (itemId da conexão mais recente, ou do campo manual abaixo) em vez de criar um item novo"
-                >
-                  {connecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
-                  Teste de update
-                </Button>
-              </div>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-3">
-              <div className="flex-1 text-xs text-muted-foreground">
-                Já existem itens conectados direto pela Pluggy (dashboard deles, sandbox etc.)?
-                Busca todos automaticamente e deixa você escolher quais conectar, sem colar ID por
-                ID — se a listagem direta não estiver habilitada pra sua conta, abre o conector pra
-                localizar do mesmo jeito.
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void discoverItems()}
-                disabled={discovering}
-              >
-                {discovering ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                Buscar itens automaticamente
+              <Button onClick={() => void connectNewBank()} disabled={connecting}>
+                {connecting ? <Loader2 className="animate-spin" /> : <Plus />}
+                Conectar novo banco
               </Button>
             </div>
             <details className="mt-3 text-sm">
               <summary className="cursor-pointer text-xs text-muted-foreground">
-                Não funcionou? Cole os IDs manualmente (a busca automática é um recurso opt-in da
-                Pluggy — pode não estar habilitado pra sua conta)
+                Já tem um Item ID da Pluggy (ex.: copiado do painel deles)? Cole aqui pra registrar
+                direto
               </summary>
               <div className="mt-2 flex flex-wrap items-end gap-2">
                 <label className="min-w-[260px] flex-1 space-y-1">
