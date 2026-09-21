@@ -360,7 +360,7 @@ const nav = [
   { id: "import" as const, label: "Conciliação e extrato", icon: FileUp },
   { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
   { id: "investments" as const, label: "Investimentos", icon: PiggyBank },
-  { id: "budgets" as const, label: "Orçamentos", icon: Target },
+  { id: "budgets" as const, label: "Controle orçamentário", icon: Target },
   { id: "bank_connections" as const, label: "Conexões bancárias", icon: Landmark },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
