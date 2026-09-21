@@ -718,27 +718,22 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
 
 export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { oauthRedirectUrl: string; itemId?: string }) => input)
+  .validator((input: { oauthRedirectUrl: string }) => input)
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
-    // Passar itemId (raiz do corpo, fora de "options") põe o widget em modo
-    // "atualizar item existente" em vez de criar um novo — não tenta criar
-    // nada, então não esbarra em ITEM_USER_ALREADY_EXISTS. clientUserId e
-    // avoidDuplicates só fazem sentido no modo de criação.
-    const body: Record<string, unknown> = {
-      options: {
-        // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
-        // um redirecionamento de ida e volta para autorizar o acesso; sem
-        // essa URL a Pluggy não sabe pra onde trazer o usuário de volta e
-        // o fluxo falha com um erro genérico.
-        oauthRedirectUrl: data.oauthRedirectUrl,
-        ...(data.itemId ? {} : { clientUserId: context.userId, avoidDuplicates: true }),
-      },
-    };
-    if (data.itemId) body["itemId"] = data.itemId;
     const result = await pluggyFetch<{ accessToken: string }>(credentials, "/connect_token", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        options: {
+          clientUserId: context.userId,
+          avoidDuplicates: true,
+          // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
+          // um redirecionamento de ida e volta para autorizar o acesso; sem
+          // essa URL a Pluggy não sabe pra onde trazer o usuário de volta e
+          // o fluxo falha com um erro genérico.
+          oauthRedirectUrl: data.oauthRedirectUrl,
+        },
+      }),
     });
     return { connectToken: result.accessToken };
   });
