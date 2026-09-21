@@ -277,6 +277,26 @@ async function fetchInvestmentTransactions(
   return items;
 }
 
+// Toda ação de conexão bancária (credenciais, conectar, sincronizar,
+// excluir) pode ser feita em nome do dono da conta ativa, não só de quem
+// está logado — usado quando um membro convidado com a permissão
+// "gerenciar conexões" mexe na conta de outra pessoa. RLS já barra o acesso
+// a dados de quem não tem permissão nenhuma; essa checagem explícita cobre
+// só o que passa pelo service role (credenciais Pluggy), que ignora RLS.
+async function assertConnectionsAccess(
+  supabase: Db,
+  callerId: string,
+  ownerUserId: string,
+): Promise<void> {
+  if (ownerUserId === callerId) return;
+  const { data: allowed } = await supabase.rpc("has_connections_access", {
+    target_user_id: ownerUserId,
+  });
+  if (!allowed) {
+    throw new Error("Você não tem permissão para gerenciar as conexões bancárias dessa conta.");
+  }
+}
+
 export async function createSupportTicket(
   supabase: Db,
   ticket: {
@@ -700,8 +720,9 @@ export async function syncConnection(
 
 export const savePluggyCredentials = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { clientId: string; clientSecret: string }) => input)
+  .validator((input: { clientId: string; clientSecret: string; ownerUserId: string }) => input)
   .handler(async ({ context, data }) => {
+    await assertConnectionsAccess(context.supabase, context.userId, data.ownerUserId);
     const clientId = data.clientId.trim();
     const clientSecret = data.clientSecret.trim();
     if (!clientId || !clientSecret) {
@@ -717,7 +738,7 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin
       .from("pluggy_credentials")
       .upsert(
-        { user_id: context.userId, client_id: clientId, client_secret: clientSecret },
+        { user_id: data.ownerUserId, client_id: clientId, client_secret: clientSecret },
         { onConflict: "user_id" },
       );
     if (error) throw new Error(error.message);
@@ -726,9 +747,10 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
 
 export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { oauthRedirectUrl: string }) => input)
+  .validator((input: { oauthRedirectUrl: string; ownerUserId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.userId);
+    await assertConnectionsAccess(context.supabase, context.userId, data.ownerUserId);
+    const credentials = await getUserPluggyCredentials(data.ownerUserId);
     // avoidDuplicates: true fazia a Pluggy VALIDAR as credenciais antes de
     // sequer abrir o fluxo de autenticação, e recusar de cara com
     // ITEM_USER_ALREADY_EXISTS quando já existe um item igual — era
@@ -740,7 +762,7 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
       method: "POST",
       body: JSON.stringify({
         options: {
-          clientUserId: context.userId,
+          clientUserId: data.ownerUserId,
           // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy)
           // fazem um redirecionamento de ida e volta para autorizar o
           // acesso; sem essa URL a Pluggy não sabe pra onde trazer o
@@ -800,10 +822,11 @@ async function registerAndSyncItem(
 
 export const registerBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { pluggyItemId: string }) => input)
+  .validator((input: { pluggyItemId: string; ownerUserId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.userId);
-    return registerAndSyncItem(context.supabase, context.userId, credentials, data.pluggyItemId);
+    await assertConnectionsAccess(context.supabase, context.userId, data.ownerUserId);
+    const credentials = await getUserPluggyCredentials(data.ownerUserId);
+    return registerAndSyncItem(context.supabase, data.ownerUserId, credentials, data.pluggyItemId);
   });
 
 export type PluggyItemInfo = {
@@ -835,9 +858,10 @@ async function markAlreadyConnected(
 // corpo do erro, sem nome nenhum; ids que não existem mais são ignorados.
 export const fetchPluggyItemsInfo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { itemIds: string[] }) => input)
+  .validator((input: { itemIds: string[]; ownerUserId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.userId);
+    await assertConnectionsAccess(context.supabase, context.userId, data.ownerUserId);
+    const credentials = await getUserPluggyCredentials(data.ownerUserId);
     const results = await Promise.allSettled(
       data.itemIds.map((id) => pluggyFetch<PluggyItem>(credentials, `/items/${id}`)),
     );
@@ -859,13 +883,14 @@ export const syncBankConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: { connectionId: string }) => input)
   .handler(async ({ context, data }) => {
-    const credentials = await getUserPluggyCredentials(context.userId);
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
-      .select("id, pluggy_item_id, last_synced_at")
+      .select("id, user_id, pluggy_item_id, last_synced_at")
       .eq("id", data.connectionId)
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
+    await assertConnectionsAccess(context.supabase, context.userId, connection.user_id);
+    const credentials = await getUserPluggyCredentials(connection.user_id);
     if (connection.last_synced_at) {
       const hoursSinceSync =
         (Date.now() - new Date(connection.last_synced_at).getTime()) / (60 * 60 * 1000);
@@ -877,7 +902,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
       }
     }
     try {
-      return await syncConnection(context.supabase, context.userId, credentials, connection);
+      return await syncConnection(context.supabase, connection.user_id, credentials, connection);
     } catch (syncError) {
       const message = syncError instanceof Error ? syncError.message : String(syncError);
       await context.supabase
@@ -885,7 +910,7 @@ export const syncBankConnection = createServerFn({ method: "POST" })
         .update({ status: "error", status_detail: message })
         .eq("id", connection.id);
       await createSupportTicket(context.supabase, {
-        user_id: context.userId,
+        user_id: connection.user_id,
         bank_connection_id: connection.id,
         title: "Falha ao sincronizar conexão bancária",
         description: message,
@@ -900,10 +925,11 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const { data: connection, error } = await context.supabase
       .from("bank_connections")
-      .select("id, pluggy_item_id")
+      .select("id, user_id, pluggy_item_id")
       .eq("id", data.connectionId)
       .single();
     if (error || !connection) throw new Error("Conexão não encontrada.");
+    await assertConnectionsAccess(context.supabase, context.userId, connection.user_id);
 
     // accounts/credit_cards/investments.bank_connection_id é ON DELETE SET
     // NULL (não CASCADE): apagar a conexão sem isso os deixaria órfãos —
@@ -993,14 +1019,14 @@ export const deleteBankConnection = createServerFn({ method: "POST" })
     // conta), mesmo já tendo sumido daqui. Não bloqueia a exclusão local se
     // falhar (o item pode já ter sido removido por lá, por exemplo).
     try {
-      const credentials = await getUserPluggyCredentials(context.userId);
+      const credentials = await getUserPluggyCredentials(connection.user_id);
       await pluggyFetch(credentials, `/items/${connection.pluggy_item_id}`, {
         method: "DELETE",
       });
     } catch (pluggyError) {
       const message = pluggyError instanceof Error ? pluggyError.message : String(pluggyError);
       await createSupportTicket(context.supabase, {
-        user_id: context.userId,
+        user_id: connection.user_id,
         title: "Falha ao remover item na Pluggy após excluir conexão",
         description: message,
       });

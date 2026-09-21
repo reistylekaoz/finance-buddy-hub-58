@@ -1020,6 +1020,18 @@ export type Database = {
         Args: { p_token: string }
         Returns: string
       }
+      has_account_access: {
+        Args: { target_user_id: string; require_edit?: boolean }
+        Returns: boolean
+      }
+      has_connections_access: {
+        Args: { target_user_id: string }
+        Returns: boolean
+      }
+      has_members_access: {
+        Args: { target_user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       account_type: "checking" | "savings" | "cash" | "investment" | "credit"

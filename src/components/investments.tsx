@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { matchInvestmentRedemptions } from "@/lib/pluggy.functions";
 import { cn } from "@/lib/utils";
+import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
 type Investment = Database["public"]["Tables"]["investments"]["Row"];
@@ -134,6 +135,7 @@ const emptyMovementForm = (): MovementFormState => ({
 });
 
 export function Investments() {
+  const { activeProfile } = useActiveProfile();
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,10 +161,15 @@ export function Investments() {
   async function load() {
     setLoading(true);
     const [investmentRows, txRows] = await Promise.all([
-      supabase.from("investments").select("*").order("name"),
+      supabase
+        .from("investments")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("name"),
       supabase
         .from("investment_transactions")
         .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
         .order("trade_date", { ascending: false }),
     ]);
     setInvestments(investmentRows.data ?? []);
@@ -171,7 +178,8 @@ export function Investments() {
   }
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   const txByInvestment = useMemo(() => {
     const map = new Map<string, InvestmentTransaction[]>();
@@ -223,7 +231,7 @@ export function Investments() {
       ? Number(investmentForm.amount_original)
       : null;
     const payload = {
-      user_id: userId,
+      user_id: activeProfile.ownerUserId,
       name: investmentForm.name,
       investment_type: investmentForm.investment_type,
       investment_subtype: investmentForm.investment_subtype || null,
@@ -264,7 +272,7 @@ export function Investments() {
       return;
     }
     const { error } = await supabase.from("investment_transactions").insert({
-      user_id: userId,
+      user_id: activeProfile.ownerUserId,
       investment_id: movementInvestmentId,
       movement_type: movementForm.movement_type,
       amount: Number(movementForm.amount || 0),
@@ -284,7 +292,7 @@ export function Investments() {
     // receita "solto" numa conta, igual ao resgate trazido pela Pluggy.
     if (movementForm.movement_type === "SELL") {
       try {
-        await matchInvestmentRedemptions(supabase, userId);
+        await matchInvestmentRedemptions(supabase, activeProfile.ownerUserId);
       } catch {
         // Casamento é um extra — não bloqueia o lançamento da movimentação.
       }

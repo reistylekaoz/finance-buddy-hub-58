@@ -30,6 +30,7 @@ import {
   type PeriodType,
 } from "@/lib/budget-period";
 import { cn } from "@/lib/utils";
+import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
 type Budget = Database["public"]["Tables"]["budgets"]["Row"];
@@ -96,6 +97,7 @@ const emptyBudgetForm = (): BudgetFormState => ({
 });
 
 export function Budgets() {
+  const { activeProfile } = useActiveProfile();
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetRecipients, setBudgetRecipients] = useState<BudgetRecipient[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -118,8 +120,7 @@ export function Budgets() {
 
   async function load() {
     setLoading(true);
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id;
+    const ownerUserId = activeProfile.ownerUserId;
     const [
       budgetRows,
       budgetRecipientRows,
@@ -129,13 +130,17 @@ export function Budgets() {
       creditCardRows,
       recipientRows,
     ] = await Promise.all([
-      supabase.from("budgets").select("*").order("created_at"),
-      supabase.from("budget_recipients").select("*"),
-      supabase.from("categories").select("*").order("name"),
-      supabase.from("cost_centers").select("*").order("name"),
-      supabase.from("accounts").select("*").order("name"),
-      supabase.from("credit_cards").select("*").order("name"),
-      supabase.from("telegram_recipients").select("*").order("created_at"),
+      supabase.from("budgets").select("*").eq("user_id", ownerUserId).order("created_at"),
+      supabase.from("budget_recipients").select("*").eq("user_id", ownerUserId),
+      supabase.from("categories").select("*").eq("user_id", ownerUserId).order("name"),
+      supabase.from("cost_centers").select("*").eq("user_id", ownerUserId).order("name"),
+      supabase.from("accounts").select("*").eq("user_id", ownerUserId).order("name"),
+      supabase.from("credit_cards").select("*").eq("user_id", ownerUserId).order("name"),
+      supabase
+        .from("telegram_recipients")
+        .select("*")
+        .eq("user_id", ownerUserId)
+        .order("created_at"),
     ]);
     const budgetList = budgetRows.data ?? [];
     setBudgets(budgetList);
@@ -146,11 +151,11 @@ export function Budgets() {
     setCreditCards(creditCardRows.data ?? []);
     setRecipients(recipientRows.data ?? []);
 
-    if (userId && budgetList.length) {
+    if (budgetList.length) {
       const entries = await Promise.all(
         budgetList.map(async (b) => {
           const period = currentBudgetPeriod(b.period_type as PeriodType, b.start_date, b.end_date);
-          const spent = await budgetSpent(supabase, userId, b, period.start, period.end);
+          const spent = await budgetSpent(supabase, ownerUserId, b, period.start, period.end);
           return [b.id, { spent, ...period }] as const;
         }),
       );
@@ -162,7 +167,8 @@ export function Budgets() {
   }
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   const categoryPath = (id: string | null): string => {
     if (!id) return "";
@@ -246,14 +252,9 @@ export function Budgets() {
       return;
     }
     setSaving(true);
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id;
-    if (!userId) {
-      setSaving(false);
-      return;
-    }
+    const ownerUserId = activeProfile.ownerUserId;
     const payload = {
-      user_id: userId,
+      user_id: ownerUserId,
       name: form.name,
       category_id: form.scope_type === "category" ? form.scope_id : null,
       cost_center_id: form.scope_type === "cost_center" ? form.scope_id : null,
@@ -294,7 +295,7 @@ export function Budgets() {
     if (form.recipient_ids.length) {
       const { error: recipientsError } = await supabase.from("budget_recipients").insert(
         form.recipient_ids.map((recipientId) => ({
-          user_id: userId,
+          user_id: ownerUserId,
           budget_id: budgetId,
           recipient_id: recipientId,
         })),
@@ -694,6 +695,7 @@ export function Budgets() {
 // criar/editar — quem quiser mexer clica em "Ver todos" e vai pra aba
 // Controle orçamentário de verdade.
 export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
+  const { activeProfile } = useActiveProfile();
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
@@ -707,15 +709,19 @@ export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
   useEffect(() => {
     void (async () => {
       setLoading(true);
-      const { data: auth } = await supabase.auth.getUser();
-      const userId = auth.user?.id;
+      const ownerUserId = activeProfile.ownerUserId;
       const [budgetRows, categoryRows, costCenterRows, accountRows, creditCardRows] =
         await Promise.all([
-          supabase.from("budgets").select("*").eq("is_active", true).order("created_at"),
-          supabase.from("categories").select("*"),
-          supabase.from("cost_centers").select("*"),
-          supabase.from("accounts").select("*"),
-          supabase.from("credit_cards").select("*"),
+          supabase
+            .from("budgets")
+            .select("*")
+            .eq("user_id", ownerUserId)
+            .eq("is_active", true)
+            .order("created_at"),
+          supabase.from("categories").select("*").eq("user_id", ownerUserId),
+          supabase.from("cost_centers").select("*").eq("user_id", ownerUserId),
+          supabase.from("accounts").select("*").eq("user_id", ownerUserId),
+          supabase.from("credit_cards").select("*").eq("user_id", ownerUserId),
         ]);
       const budgetList = budgetRows.data ?? [];
       setBudgets(budgetList);
@@ -723,7 +729,7 @@ export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
       setCostCenters(costCenterRows.data ?? []);
       setAccounts(accountRows.data ?? []);
       setCreditCards(creditCardRows.data ?? []);
-      if (userId && budgetList.length) {
+      if (budgetList.length) {
         const entries = await Promise.all(
           budgetList.map(async (b) => {
             const period = currentBudgetPeriod(
@@ -731,7 +737,7 @@ export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
               b.start_date,
               b.end_date,
             );
-            const spent = await budgetSpent(supabase, userId, b, period.start, period.end);
+            const spent = await budgetSpent(supabase, ownerUserId, b, period.start, period.end);
             return [b.id, { spent, ...period }] as const;
           }),
         );
@@ -739,7 +745,7 @@ export function BudgetsPanel({ onOpenAll }: { onOpenAll?: () => void }) {
       }
       setLoading(false);
     })();
-  }, []);
+  }, [activeProfile.ownerUserId]);
 
   const categoryPath = (id: string | null): string => {
     if (!id) return "";

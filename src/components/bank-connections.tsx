@@ -40,6 +40,7 @@ import {
   syncBankConnection,
   type PluggyItemInfo,
 } from "@/lib/pluggy.functions";
+import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
 type BankConnection = Database["public"]["Tables"]["bank_connections"]["Row"];
@@ -113,6 +114,7 @@ const selectClass =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring";
 
 export function BankConnections({ onSynced }: { onSynced: () => void }) {
+  const { activeProfile } = useActiveProfile();
   const [connections, setConnections] = useState<BankConnection[]>([]);
   const [accountByConnection, setAccountByConnection] = useState<Map<string, ConnectedAccountInfo>>(
     new Map(),
@@ -137,11 +139,20 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
       { data: connectionRows },
       { data: accountRows },
     ] = await Promise.all([
-      supabase.from("profiles").select("pluggy_configured").maybeSingle(),
-      supabase.from("bank_connections").select("*").order("created_at", { ascending: false }),
+      supabase
+        .from("profiles")
+        .select("pluggy_configured")
+        .eq("id", activeProfile.ownerUserId)
+        .maybeSingle(),
+      supabase
+        .from("bank_connections")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at", { ascending: false }),
       supabase
         .from("accounts")
         .select("bank_connection_id, institution, owner_name, branch_number, account_number")
+        .eq("user_id", activeProfile.ownerUserId)
         .not("bank_connection_id", "is", null),
     ]);
     if (profileError) {
@@ -160,14 +171,19 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
   }
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   async function saveCredentials() {
     if (!clientId.trim() || !clientSecret.trim()) return;
     setSavingCredentials(true);
     try {
       await savePluggyCredentials({
-        data: { clientId: clientId.trim(), clientSecret: clientSecret.trim() },
+        data: {
+          clientId: clientId.trim(),
+          clientSecret: clientSecret.trim(),
+          ownerUserId: activeProfile.ownerUserId,
+        },
       });
       toast.success("Credenciais salvas! Agora você já pode conectar seus bancos.");
       setClientSecret("");
@@ -180,7 +196,9 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
   }
 
   async function registerExistingItem(pluggyItemId: string) {
-    await registerBankConnection({ data: { pluggyItemId } });
+    await registerBankConnection({
+      data: { pluggyItemId, ownerUserId: activeProfile.ownerUserId },
+    });
   }
 
   // Tela de escolha, aberta quando ITEM_USER_ALREADY_EXISTS devolve a lista
@@ -261,7 +279,7 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     try {
       await loadPluggyWidget();
       const { connectToken } = await createPluggyConnectToken({
-        data: { oauthRedirectUrl: window.location.href },
+        data: { oauthRedirectUrl: window.location.href, ownerUserId: activeProfile.ownerUserId },
       });
       if (!window.PluggyConnect) throw new Error("Widget da Pluggy indisponível.");
       const widget = new window.PluggyConnect({
@@ -294,7 +312,9 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
           if (details?.message === "ITEM_USER_ALREADY_EXISTS" && existingIds.length) {
             void (async () => {
               try {
-                const { items } = await fetchPluggyItemsInfo({ data: { itemIds: existingIds } });
+                const { items } = await fetchPluggyItemsInfo({
+                  data: { itemIds: existingIds, ownerUserId: activeProfile.ownerUserId },
+                });
                 if (items.length) {
                   openPicker(items);
                   // Preenche o campo manual com os ids encontrados, pra
