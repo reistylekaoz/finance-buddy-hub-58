@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { triggerClass } from "@/components/ui/filters";
 import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
 import { paginate } from "@/lib/paginate";
+import { ignoreExternalIds } from "@/lib/ignored-external-ids";
 import { cn } from "@/lib/utils";
 import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
@@ -413,6 +414,13 @@ export function StatementImport({
       toast.error(error.message);
       return;
     }
+    // Guarda o external_id da "perna" removida para a sincronização diária
+    // não recriar o lançamento e devolvê-lo à fila de conciliação.
+    await ignoreExternalIds(
+      activeProfile.ownerUserId,
+      [(incomeTx as { external_id?: string | null }).external_id],
+      "transferencia_conciliada",
+    );
     const { error: deleteError } = await supabase
       .from("transactions")
       .delete()
