@@ -722,9 +722,9 @@ export const createPluggyConnectToken = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const credentials = await getUserPluggyCredentials(context.userId);
     // Passar itemId (raiz do corpo, fora de "options") põe o widget em modo
-    // "atualizar item existente" em vez de criar um novo — não tenta criar
-    // nada, então não esbarra em ITEM_USER_ALREADY_EXISTS. clientUserId e
-    // avoidDuplicates só fazem sentido no modo de criação.
+    // "atualizar item existente" em vez de criar um novo — usado pelo botão
+    // de teste em Conexões bancárias. clientUserId/avoidDuplicates só fazem
+    // sentido no modo de criação.
     const body: Record<string, unknown> = {
       options: {
         // Conectores baseados em Open Finance/OAuth (ex.: MeuPluggy) fazem
