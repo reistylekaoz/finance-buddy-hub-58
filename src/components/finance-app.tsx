@@ -35,6 +35,7 @@ import {
   Send,
   Settings as SettingsIcon,
   Smartphone,
+  Target,
   Trash2,
   Shapes,
   TrendingUp,
@@ -81,6 +82,7 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { CreditCards } from "@/components/credit-cards";
 import { Investments } from "@/components/investments";
+import { Budgets } from "@/components/budgets";
 import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
@@ -115,6 +117,7 @@ type View =
   | "import"
   | "credit_cards"
   | "investments"
+  | "budgets"
   | "bank_connections"
   | "categories"
   | "cost_centers"
@@ -357,6 +360,7 @@ const nav = [
   { id: "import" as const, label: "Conciliação e extrato", icon: FileUp },
   { id: "credit_cards" as const, label: "Cartões de crédito", icon: CreditCard },
   { id: "investments" as const, label: "Investimentos", icon: PiggyBank },
+  { id: "budgets" as const, label: "Orçamentos", icon: Target },
   { id: "bank_connections" as const, label: "Conexões bancárias", icon: Landmark },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "cost_centers" as const, label: "Centros de custo", icon: Building2 },
@@ -1052,6 +1056,7 @@ export function FinanceApp() {
             {view !== "import" &&
               view !== "credit_cards" &&
               view !== "investments" &&
+              view !== "budgets" &&
               view !== "bank_connections" && (
                 <Button
                   onClick={() =>
@@ -1158,6 +1163,7 @@ export function FinanceApp() {
                 />
               )}
               {view === "investments" && <Investments />}
+              {view === "budgets" && <Budgets />}
               {view === "bank_connections" && <BankConnections onSynced={load} />}
               {view === "categories" && (
                 <Categories

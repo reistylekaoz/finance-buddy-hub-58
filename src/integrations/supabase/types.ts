@@ -154,6 +154,155 @@ export type Database = {
         }
         Relationships: []
       }
+      budget_alerts_sent: {
+        Row: {
+          alert_type: string
+          budget_id: string
+          id: string
+          period_end: string
+          period_start: string
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          alert_type: string
+          budget_id: string
+          id?: string
+          period_end: string
+          period_start: string
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          alert_type?: string
+          budget_id?: string
+          id?: string
+          period_end?: string
+          period_start?: string
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_alerts_sent_budget_id_fkey"
+            columns: ["budget_id"]
+            isOneToOne: false
+            referencedRelation: "budgets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      budget_recipients: {
+        Row: {
+          budget_id: string
+          created_at: string
+          id: string
+          recipient_id: string
+          user_id: string
+        }
+        Insert: {
+          budget_id: string
+          created_at?: string
+          id?: string
+          recipient_id: string
+          user_id: string
+        }
+        Update: {
+          budget_id?: string
+          created_at?: string
+          id?: string
+          recipient_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_recipients_budget_id_fkey"
+            columns: ["budget_id"]
+            isOneToOne: false
+            referencedRelation: "budgets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budget_recipients_recipient_id_fkey"
+            columns: ["recipient_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_recipients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      budgets: {
+        Row: {
+          alert_daily_report: boolean
+          alert_exceeded_enabled: boolean
+          alert_threshold_enabled: boolean
+          alert_threshold_percent: number | null
+          amount: number
+          category_id: string | null
+          cost_center_id: string | null
+          created_at: string
+          end_date: string | null
+          id: string
+          is_active: boolean
+          name: string
+          period_type: string
+          start_date: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          alert_daily_report?: boolean
+          alert_exceeded_enabled?: boolean
+          alert_threshold_enabled?: boolean
+          alert_threshold_percent?: number | null
+          amount: number
+          category_id?: string | null
+          cost_center_id?: string | null
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          period_type: string
+          start_date: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          alert_daily_report?: boolean
+          alert_exceeded_enabled?: boolean
+          alert_threshold_enabled?: boolean
+          alert_threshold_percent?: number | null
+          amount?: number
+          category_id?: string | null
+          cost_center_id?: string | null
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          period_type?: string
+          start_date?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budgets_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budgets_cost_center_id_fkey"
+            columns: ["cost_center_id"]
+            isOneToOne: false
+            referencedRelation: "cost_centers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       categories: {
         Row: {
           category_type: Database["public"]["Enums"]["category_type"]

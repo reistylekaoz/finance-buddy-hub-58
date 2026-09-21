@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/integrations/supabase/types";
+import {
+  budgetSpent,
+  currentBudgetPeriod,
+  PERIOD_LABELS,
+  type PeriodType,
+} from "@/lib/budget-period";
 
 type Db = SupabaseClient<Database>;
 
@@ -947,6 +953,158 @@ export async function sendDailyDigests(supabaseAdmin: Db): Promise<{ sent: numbe
       if (!enabled || !isScheduledToday(freq, now)) continue;
       const didSend = await sendDigestForRecipient(supabaseAdmin, recipient, freq, now);
       if (didSend) sent += 1;
+    }
+  }
+
+  return { sent };
+}
+
+async function budgetScopeLabel(
+  supabaseAdmin: Db,
+  budget: { category_id: string | null; cost_center_id: string | null },
+): Promise<string> {
+  if (budget.category_id) {
+    const { data } = await supabaseAdmin
+      .from("categories")
+      .select("name")
+      .eq("id", budget.category_id)
+      .maybeSingle();
+    return data?.name ?? "categoria";
+  }
+  if (budget.cost_center_id) {
+    const { data } = await supabaseAdmin
+      .from("cost_centers")
+      .select("name")
+      .eq("id", budget.cost_center_id)
+      .maybeSingle();
+    return data?.name ?? "centro de custo";
+  }
+  return "";
+}
+
+async function alreadySentAlert(
+  supabaseAdmin: Db,
+  budgetId: string,
+  alertType: "threshold" | "exceeded",
+  periodStart: string,
+): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from("budget_alerts_sent")
+    .select("id")
+    .eq("budget_id", budgetId)
+    .eq("alert_type", alertType)
+    .eq("period_start", periodStart)
+    .maybeSingle();
+  return !!data;
+}
+
+// Roda dentro do cron diário (18:00), depois da sincronização bancária: para
+// cada orçamento ativo, calcula a janela do período atual (fixo ou
+// recorrente) e o quanto já foi gasto nela, e manda pros destinatários
+// configurados o que estiver habilitado — report diário (sempre que rodar),
+// alerta de limiar e de estouro (uma vez só por período, via
+// budget_alerts_sent).
+export async function checkBudgetsAndAlert(supabaseAdmin: Db): Promise<{ sent: number }> {
+  const now = new Date();
+  const { data: budgetRows } = await supabaseAdmin
+    .from("budgets")
+    .select("*")
+    .eq("is_active", true);
+
+  let sent = 0;
+  for (const budget of budgetRows ?? []) {
+    if (
+      !budget.alert_daily_report &&
+      !budget.alert_threshold_enabled &&
+      !budget.alert_exceeded_enabled
+    ) {
+      continue;
+    }
+    const period = currentBudgetPeriod(
+      budget.period_type as PeriodType,
+      budget.start_date,
+      budget.end_date,
+      now,
+    );
+    if (budget.period_type === "fixed" && toIsoDate(now) > period.end) continue;
+
+    const { data: budgetRecipientRows } = await supabaseAdmin
+      .from("budget_recipients")
+      .select("recipient_id")
+      .eq("budget_id", budget.id);
+    const recipientIds = (budgetRecipientRows ?? []).map((r) => r.recipient_id);
+    if (!recipientIds.length) continue;
+    const { data: recipientRows } = await supabaseAdmin
+      .from("telegram_recipients")
+      .select("telegram_chat_id")
+      .in("id", recipientIds)
+      .not("telegram_chat_id", "is", null);
+    const chatIds = (recipientRows ?? [])
+      .map((r) => r.telegram_chat_id)
+      .filter((id): id is string => !!id);
+    if (!chatIds.length) continue;
+
+    const spent = await budgetSpent(
+      supabaseAdmin,
+      budget.user_id,
+      budget,
+      period.start,
+      period.end,
+    );
+    const amount = Number(budget.amount);
+    const pct = amount > 0 ? (spent / amount) * 100 : 0;
+    const exceeded = spent > amount;
+    const thresholdHit =
+      budget.alert_threshold_enabled &&
+      budget.alert_threshold_percent !== null &&
+      pct >= Number(budget.alert_threshold_percent) &&
+      !exceeded;
+
+    const scopeLabel = await budgetScopeLabel(supabaseAdmin, budget);
+    const header = `${budget.name} (${scopeLabel} · ${PERIOD_LABELS[budget.period_type as PeriodType]})`;
+    const progressLine = `${money(spent)} de ${money(amount)} (${pct.toFixed(0)}%)`;
+
+    if (budget.alert_daily_report) {
+      const text = [`📊 ${header}`, progressLine].join("\n");
+      for (const chatId of chatIds) await sendTelegramMessage(chatId, text);
+      sent += chatIds.length;
+    }
+
+    if (
+      thresholdHit &&
+      !(await alreadySentAlert(supabaseAdmin, budget.id, "threshold", period.start))
+    ) {
+      const text = [
+        `⚠️ ${header}`,
+        `Atingiu ${Number(budget.alert_threshold_percent)}% do orçamento.`,
+        progressLine,
+      ].join("\n");
+      for (const chatId of chatIds) await sendTelegramMessage(chatId, text);
+      await supabaseAdmin.from("budget_alerts_sent").insert({
+        user_id: budget.user_id,
+        budget_id: budget.id,
+        alert_type: "threshold",
+        period_start: period.start,
+        period_end: period.end,
+      });
+      sent += chatIds.length;
+    }
+
+    if (
+      budget.alert_exceeded_enabled &&
+      exceeded &&
+      !(await alreadySentAlert(supabaseAdmin, budget.id, "exceeded", period.start))
+    ) {
+      const text = [`🚨 ${header}`, "Orçamento estourado!", progressLine].join("\n");
+      for (const chatId of chatIds) await sendTelegramMessage(chatId, text);
+      await supabaseAdmin.from("budget_alerts_sent").insert({
+        user_id: budget.user_id,
+        budget_id: budget.id,
+        alert_type: "exceeded",
+        period_start: period.start,
+        period_end: period.end,
+      });
+      sent += chatIds.length;
     }
   }
 
