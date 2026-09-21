@@ -257,12 +257,17 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     onSynced();
   }
 
-  async function connectNewBank() {
+  // Função única do fluxo do widget: sem itemId, pede o connect_token em
+  // modo "criar item novo" (Conectar novo banco); com itemId, pede em modo
+  // "atualizar item existente" (Teste de update) — só muda o que é passado
+  // pra createPluggyConnectToken, o resto (onSuccess/onError/onClose) é
+  // idêntico nos dois casos.
+  async function openPluggyWidget(itemId?: string) {
     setConnecting(true);
     try {
       await loadPluggyWidget();
       const { connectToken } = await createPluggyConnectToken({
-        data: { oauthRedirectUrl: window.location.href },
+        data: { oauthRedirectUrl: window.location.href, ...(itemId ? { itemId } : {}) },
       });
       if (!window.PluggyConnect) throw new Error("Widget da Pluggy indisponível.");
       const widget = new window.PluggyConnect({
@@ -331,6 +336,23 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
       toast.error(error instanceof Error ? error.message : "Falha ao iniciar a conexão.");
       setConnecting(false);
     }
+  }
+
+  async function connectNewBank() {
+    await openPluggyWidget();
+  }
+
+  // Botão de teste: usa a MESMA função acima, só que passando o itemId da
+  // conexão mais recente — o que muda é só a chamada ao createPluggyConnectToken
+  // (modo update em vez de criação). Serve pra comparar na prática se isso
+  // evita o ITEM_USER_ALREADY_EXISTS.
+  async function testUpdateConnect() {
+    const targetItemId = connections[0]?.pluggy_item_id;
+    if (!targetItemId) {
+      toast.error("Conecte um banco primeiro pra poder testar o modo de atualização.");
+      return;
+    }
+    await openPluggyWidget(targetItemId);
   }
 
   const [manualItemIds, setManualItemIds] = useState("");
@@ -536,10 +558,21 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                   automaticamente em Contas e Cartões de crédito, sem precisar importar arquivo.
                 </p>
               </div>
-              <Button onClick={() => void connectNewBank()} disabled={connecting}>
-                {connecting ? <Loader2 className="animate-spin" /> : <Plus />}
-                Conectar novo banco
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={() => void connectNewBank()} disabled={connecting}>
+                  {connecting ? <Loader2 className="animate-spin" /> : <Plus />}
+                  Conectar novo banco
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void testUpdateConnect()}
+                  disabled={connecting || !connections.length}
+                  title="Experimental: pede o connect_token em modo atualização (itemId da conexão mais recente) em vez de criar um item novo"
+                >
+                  {connecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
+                  Teste de update
+                </Button>
+              </div>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-3">
               <div className="flex-1 text-xs text-muted-foreground">
