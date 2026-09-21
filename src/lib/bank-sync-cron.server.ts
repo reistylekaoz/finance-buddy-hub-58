@@ -6,7 +6,7 @@ import {
   matchInvestmentRedemptions,
   syncConnection,
 } from "@/lib/pluggy.functions";
-import { sendDailyDigests } from "@/lib/telegram.server";
+import { checkBudgetsAndAlert, sendDailyDigests } from "@/lib/telegram.server";
 
 // Disparado diariamente às 18:00 pelo agendador da Lovable Cloud (protegido
 // por LOVABLE_CRON_SECRET) para trazer as movimentações do dia de todas as
@@ -71,7 +71,14 @@ export async function handleBankSyncCron(request: Request): Promise<Response> {
     console.error("[telegram digest]", digestError);
   }
 
-  return new Response(JSON.stringify({ synced, failed, digestsSent }), {
+  let budgetAlertsSent = 0;
+  try {
+    budgetAlertsSent = (await checkBudgetsAndAlert(supabaseAdmin)).sent;
+  } catch (budgetError) {
+    console.error("[budget alerts]", budgetError);
+  }
+
+  return new Response(JSON.stringify({ synced, failed, digestsSent, budgetAlertsSent }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
