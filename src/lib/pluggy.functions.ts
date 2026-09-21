@@ -593,12 +593,24 @@ export async function syncConnection(
         const knownIds = new Set<string>();
         for (let i = 0; i < rows.length; i += 500) {
           const slice = rows.slice(i, i + 500).map((r) => r.external_id);
-          const { data: existing } = await supabase
-            .from("transactions")
-            .select("external_id")
-            .eq("user_id", userId)
-            .in("external_id", slice);
+          const [{ data: existing }, { data: ignored }] = await Promise.all([
+            supabase
+              .from("transactions")
+              .select("external_id")
+              .eq("user_id", userId)
+              .in("external_id", slice),
+            // Lançamentos que o usuário removeu de propósito (ex.: a perna
+            // duplicada de uma transferência já conciliada) não podem voltar.
+            supabase
+              .from("ignored_external_ids")
+              .select("external_id")
+              .eq("user_id", userId)
+              .in("external_id", slice),
+          ]);
           for (const row of existing ?? []) {
+            if (row.external_id) knownIds.add(row.external_id);
+          }
+          for (const row of ignored ?? []) {
             if (row.external_id) knownIds.add(row.external_id);
           }
         }

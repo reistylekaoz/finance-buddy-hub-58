@@ -413,6 +413,13 @@ export function StatementImport({
       toast.error(error.message);
       return;
     }
+    // Guarda o external_id da "perna" removida para a sincronização diária
+    // não recriar o lançamento e devolvê-lo à fila de conciliação.
+    await ignoreExternalIds(
+      activeProfile.ownerUserId,
+      [(incomeTx as { external_id?: string | null }).external_id],
+      "transferencia_conciliada",
+    );
     const { error: deleteError } = await supabase
       .from("transactions")
       .delete()
