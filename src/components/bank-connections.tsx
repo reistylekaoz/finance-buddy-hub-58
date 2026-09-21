@@ -342,14 +342,22 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
     await openPluggyWidget();
   }
 
-  // Botão de teste: usa a MESMA função acima, só que passando o itemId da
-  // conexão mais recente — o que muda é só a chamada ao createPluggyConnectToken
-  // (modo update em vez de criação). Serve pra comparar na prática se isso
-  // evita o ITEM_USER_ALREADY_EXISTS.
+  // Botão de teste: usa a MESMA função acima, só que passando um itemId —
+  // o que muda é só a chamada ao createPluggyConnectToken (modo update em
+  // vez de criação). Sempre ativo (não depende de já ter uma conexão
+  // registrada): usa a mais recente se existir, senão cai pro primeiro ID
+  // colado no campo manual — útil justamente quando o registro normal nunca
+  // chegou a completar (o cenário do ITEM_USER_ALREADY_EXISTS).
   async function testUpdateConnect() {
-    const targetItemId = connections[0]?.pluggy_item_id;
+    const pastedIds = manualItemIds
+      .split(/[\n,]/)
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const targetItemId = connections[0]?.pluggy_item_id || pastedIds[0];
     if (!targetItemId) {
-      toast.error("Conecte um banco primeiro pra poder testar o modo de atualização.");
+      toast.error(
+        "Cole ao menos um Item ID no campo abaixo (ou conecte um banco) pra poder testar o modo de atualização.",
+      );
       return;
     }
     await openPluggyWidget(targetItemId);
@@ -566,8 +574,8 @@ export function BankConnections({ onSynced }: { onSynced: () => void }) {
                 <Button
                   variant="outline"
                   onClick={() => void testUpdateConnect()}
-                  disabled={connecting || !connections.length}
-                  title="Experimental: pede o connect_token em modo atualização (itemId da conexão mais recente) em vez de criar um item novo"
+                  disabled={connecting}
+                  title="Experimental: pede o connect_token em modo atualização (itemId da conexão mais recente, ou do campo manual abaixo) em vez de criar um item novo"
                 >
                   {connecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
                   Teste de update
