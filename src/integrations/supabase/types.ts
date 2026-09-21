@@ -607,6 +607,30 @@ export type Database = {
         }
         Relationships: []
       }
+      ignored_external_ids: {
+        Row: {
+          created_at: string
+          external_id: string
+          id: string
+          reason: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_id: string
+          id?: string
+          reason?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          external_id?: string
+          id?: string
+          reason?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       investment_transactions: {
         Row: {
           amount: number
