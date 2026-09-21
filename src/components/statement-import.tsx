@@ -18,6 +18,7 @@ import { triggerClass } from "@/components/ui/filters";
 import { batchProgress, BULK_BATCH_SIZE } from "@/lib/batch";
 import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
+import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
@@ -285,6 +286,7 @@ export function StatementImport({
   pendingBankTransactions: TransactionRow[];
   onImported: () => void;
 }) {
+  const { activeProfile } = useActiveProfile();
   const manualAccounts = useMemo(() => accounts.filter((a) => !a.bank_connection_id), [accounts]);
   const inputRef = useRef<HTMLInputElement>(null);
   const [accountId, setAccountId] = useState(manualAccounts[0]?.id ?? "");
@@ -463,10 +465,11 @@ export function StatementImport({
   async function loadPendingCards() {
     setPendingLoading(true);
     const [cardRows, cardTxRows] = await Promise.all([
-      supabase.from("credit_cards").select("*"),
+      supabase.from("credit_cards").select("*").eq("user_id", activeProfile.ownerUserId),
       supabase
         .from("credit_card_transactions")
         .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
         .eq("source", "api")
         .is("reviewed_at", null)
         .order("purchase_date", { ascending: false }),
@@ -477,7 +480,8 @@ export function StatementImport({
   }
   useEffect(() => {
     void loadPendingCards();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -515,6 +519,7 @@ export function StatementImport({
       const { data: existing } = await supabase
         .from("transactions")
         .select("external_id")
+        .eq("user_id", activeProfile.ownerUserId)
         .in("external_id", keys);
       const seen = new Set(
         (existing ?? []).map((row: { external_id: string | null }) => row.external_id),
@@ -597,10 +602,8 @@ export function StatementImport({
     setBusy(true);
     setError("");
     setMessage("");
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id;
     const chosen = rows.filter((row) => row.selected);
-    if (!userId || !chosen.length) {
+    if (!chosen.length) {
       setBusy(false);
       return;
     }
@@ -613,7 +616,7 @@ export function StatementImport({
 
     if (toInsert.length) {
       const payload = toInsert.map((row) => ({
-        user_id: userId,
+        user_id: activeProfile.ownerUserId,
         transaction_type: (row.amount >= 0 ? "income" : "expense") as "income" | "expense",
         account_id: accountId,
         category_id: row.category_id,

@@ -445,18 +445,35 @@ export function FinanceApp() {
             "display_name, dashboard_filters, dashboard_widgets, transactions_filters, active_filters",
           )
           .maybeSingle(),
-        supabase.from("accounts").select("*").order("created_at"),
-        supabase.from("categories").select("*").order("name"),
+        supabase
+          .from("accounts")
+          .select("*")
+          .eq("user_id", activeProfile.ownerUserId)
+          .order("created_at"),
+        supabase
+          .from("categories")
+          .select("*")
+          .eq("user_id", activeProfile.ownerUserId)
+          .order("name"),
         fetchAllRows<Transaction>((from, to) =>
           supabase
             .from("transactions")
             .select("*")
+            .eq("user_id", activeProfile.ownerUserId)
             .order("transaction_date", { ascending: false })
             .order("id", { ascending: true })
             .range(from, to),
         ),
-        supabase.from("assets").select("*").order("created_at", { ascending: false }),
-        supabase.from("cost_centers").select("*").order("name"),
+        supabase
+          .from("assets")
+          .select("*")
+          .eq("user_id", activeProfile.ownerUserId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("cost_centers")
+          .select("*")
+          .eq("user_id", activeProfile.ownerUserId)
+          .order("name"),
       ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
@@ -506,7 +523,8 @@ export function FinanceApp() {
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   const [rates, setRates] = useState<Record<string, number>>({ BRL: 1 });
   const [rateDate, setRateDate] = useState("");
@@ -947,7 +965,7 @@ export function FinanceApp() {
       const rows = buildRecurrenceRows();
       result = await supabase.from("transactions").insert(
         rows.map((r) => ({
-          user_id: userId,
+          user_id: activeProfile.ownerUserId,
           transaction_type: form.transaction_type as Transaction["transaction_type"],
           account_id: form.account_id,
           category_id: form.category_id || null,
@@ -1020,7 +1038,11 @@ export function FinanceApp() {
                 };
     const table = tableOf[modal];
     if (editingId) result = await (supabase.from(table) as any).update(payload).eq("id", editingId);
-    else result = await (supabase.from(table) as any).insert({ user_id: userId, ...payload });
+    else
+      result = await (supabase.from(table) as any).insert({
+        user_id: activeProfile.ownerUserId,
+        ...payload,
+      });
     if (result.error) setError(result.error.message);
     else if (continueAfter && !editingId) {
       toast.success("Salvo. Pronto para o próximo.");
@@ -3719,6 +3741,7 @@ function Settings({
   accounts: Account[];
   onWiped: () => void | Promise<void>;
 }) {
+  const { activeProfile } = useActiveProfile();
   const [recipients, setRecipients] = useState<TelegramRecipientRow[]>([]);
   const [cards, setCards] = useState<{ id: string; name: string }[]>([]);
   const [botUsername, setBotUsername] = useState<string | null>(null);
@@ -3743,8 +3766,16 @@ function Settings({
   async function load() {
     setLoading(true);
     const [{ data: recipientRows }, { data: cardRows }] = await Promise.all([
-      supabase.from("telegram_recipients").select("*").order("created_at"),
-      supabase.from("credit_cards").select("id, name").order("created_at"),
+      supabase
+        .from("telegram_recipients")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at"),
+      supabase
+        .from("credit_cards")
+        .select("id, name")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at"),
     ]);
     setRecipients(recipientRows ?? []);
     setCards(cardRows ?? []);
@@ -3759,14 +3790,14 @@ function Settings({
   }
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   async function addRecipient() {
     if (!newLabel.trim()) return;
     setAdding(true);
-    const { data: auth } = await supabase.auth.getUser();
     const { error } = await supabase.from("telegram_recipients").insert({
-      user_id: auth.user?.id ?? "",
+      user_id: activeProfile.ownerUserId,
       label: newLabel.trim(),
       telegram_username: newUsername.trim() ? newUsername.trim().replace(/^@/, "") : null,
     });
@@ -3949,22 +3980,24 @@ function Settings({
         </details>
       </section>
 
-      <section className="rounded-lg border border-destructive/40 bg-destructive-soft/40 p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <Trash2 className="size-6 flex-none text-destructive" />
-          <div className="min-w-0 flex-1">
-            <h2 className="font-semibold text-destructive">Zona de risco</h2>
-            <p className="text-xs text-muted-foreground">
-              Apaga contas, cartões, lançamentos, compras, investimentos, orçamentos e conexões
-              bancárias (removendo também o acesso na Pluggy). Ação irreversível.
-            </p>
+      {activeProfile.isOwner && (
+        <section className="rounded-lg border border-destructive/40 bg-destructive-soft/40 p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <Trash2 className="size-6 flex-none text-destructive" />
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold text-destructive">Zona de risco</h2>
+              <p className="text-xs text-muted-foreground">
+                Apaga contas, cartões, lançamentos, compras, investimentos, orçamentos e conexões
+                bancárias (removendo também o acesso na Pluggy). Ação irreversível.
+              </p>
+            </div>
+            <Button variant="destructive" onClick={openWipeDialog}>
+              <Trash2 />
+              Apagar todos os dados
+            </Button>
           </div>
-          <Button variant="destructive" onClick={openWipeDialog}>
-            <Trash2 />
-            Apagar todos os dados
-          </Button>
-        </div>
-      </section>
+        </section>
+      )}
 
       <Dialog
         open={wipeOpen}

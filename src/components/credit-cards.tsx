@@ -28,6 +28,7 @@ import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { cn } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
+import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
 type Category = Database["public"]["Tables"]["categories"]["Row"];
@@ -188,6 +189,7 @@ export function CreditCards({
   statusFilter: "all" | "active" | "inactive";
   onStatusFilterChange: (value: "all" | "active" | "inactive") => void;
 }) {
+  const { activeProfile } = useActiveProfile();
   const [cards, setCards] = useState<CreditCardRow[]>([]);
   const [txs, setTxs] = useState<CardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -228,11 +230,16 @@ export function CreditCards({
   async function load() {
     setLoading(true);
     const [cardRows, txsData] = await Promise.all([
-      supabase.from("credit_cards").select("*").order("created_at"),
+      supabase
+        .from("credit_cards")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at"),
       fetchAllRows<CardTransaction>((from, to) =>
         supabase
           .from("credit_card_transactions")
           .select("*")
+          .eq("user_id", activeProfile.ownerUserId)
           .order("purchase_date", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -244,7 +251,8 @@ export function CreditCards({
   }
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile.ownerUserId]);
 
   const usedByCard = useMemo(() => {
     const map = new Map<string, number>();
@@ -291,7 +299,7 @@ export function CreditCards({
       return;
     }
     const payload = {
-      user_id: userId,
+      user_id: activeProfile.ownerUserId,
       name: cardForm.name,
       institution: cardForm.institution || null,
       credit_limit: Number(cardForm.credit_limit || 0),
@@ -354,7 +362,7 @@ export function CreditCards({
     const rows = buildInstallmentRows();
     const { error } = await supabase.from("credit_card_transactions").insert(
       rows.map((r) => ({
-        user_id: userId,
+        user_id: activeProfile.ownerUserId,
         card_id: txForm.card_id,
         category_id: txForm.category_id || null,
         cost_center_id: txForm.cost_center_id || null,
@@ -421,7 +429,7 @@ export function CreditCards({
       )
       .map((t) => t.id);
     const { error: txError } = await supabase.from("transactions").insert({
-      user_id: userId,
+      user_id: activeProfile.ownerUserId,
       transaction_type: "expense",
       account_id: payAccountId,
       amount: payTarget.total,
