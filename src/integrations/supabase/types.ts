@@ -812,7 +812,6 @@ export type Database = {
       }
       support_tickets: {
         Row: {
-          account_id: string | null
           bank_connection_id: string | null
           created_at: string
           description: string | null
@@ -824,7 +823,6 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          account_id?: string | null
           bank_connection_id?: string | null
           created_at?: string
           description?: string | null
@@ -836,7 +834,6 @@ export type Database = {
           user_id: string
         }
         Update: {
-          account_id?: string | null
           bank_connection_id?: string | null
           created_at?: string
           description?: string | null
@@ -848,13 +845,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "support_tickets_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "support_tickets_bank_connection_id_fkey"
             columns: ["bank_connection_id"]
