@@ -96,10 +96,11 @@ import { BankConnections } from "@/components/bank-connections";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { ignoreExternalIds } from "@/lib/ignored-external-ids";
 import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
-import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
+import darkModeLogo from "@/assets/fluxora-logo-sidebar-dark.png.asset.json";
 
 type Account = Database["public"]["Tables"]["accounts"]["Row"];
 type Category = Database["public"]["Tables"]["categories"]["Row"];
@@ -910,6 +911,16 @@ export function FinanceApp() {
         return;
       }
     }
+    if (type === "transaction") {
+      // Lançamento vindo do banco apagado de propósito não pode voltar na
+      // próxima sincronização.
+      const { data: row } = await supabase
+        .from("transactions")
+        .select("external_id")
+        .eq("id", id)
+        .maybeSingle();
+      await ignoreExternalIds(activeProfile.ownerUserId, [row?.external_id], "excluido_pelo_usuario");
+    }
     const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
     setDeleting(false);
     if (delError) toast.error(`Não foi possível excluir: ${delError.message}`);
@@ -1099,7 +1110,7 @@ export function FinanceApp() {
         >
           <div className="flex items-center justify-between px-2 py-2">
             <img
-              src={lightLogo.url}
+              src={darkModeLogo.url}
               alt="Fluxora — Gestão financeira inteligente"
               className="h-auto w-40"
             />
@@ -3266,6 +3277,14 @@ function Transactions({
       toast.error(error.message);
       return;
     }
+    // Marca o external_id da "perna" removida como tratado: sem isso a
+    // sincronização diária não encontra mais esse lançamento no banco de
+    // dados e o recria, jogando-o de volta na fila de conciliação.
+    await ignoreExternalIds(
+      (incomeTx as { user_id?: string }).user_id ?? "",
+      [(incomeTx as { external_id?: string | null }).external_id],
+      "transferencia_conciliada",
+    );
     const { error: deleteError } = await supabase
       .from("transactions")
       .delete()

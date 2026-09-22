@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import lightLogo from "@/assets/fluxora-logo-light-transparent.png.asset.json";
-import darkLogo from "@/assets/fluxora-logo-dark-transparent.png.asset.json";
+import darkLogo from "@/assets/fluxora-logo-sidebar-dark.png.asset.json";
 
 export const Route = createFileRoute("/auth")({
   validateSearch: (search: Record<string, unknown>): { redirect?: string } =>
