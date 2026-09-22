@@ -115,7 +115,8 @@ function PrivacyPolicy() {
           Seus dados financeiros são protegidos por controle de acesso por usuário (cada pessoa só
           acessa os próprios dados ou os de contas que explicitamente compartilharam com ela).
           Credenciais de integração bancária (client ID/secret da Pluggy) ficam numa tabela isolada,
-          sem nenhum acesso direto pelo navegador — só o servidor consegue lê-las.
+          sem nenhum acesso direto pelo navegador — só o servidor consegue lê-las — e o client
+          secret também é criptografado no banco de dados.
         </p>
 
         <h2 className="font-display text-xl font-semibold">8. Seus direitos (art. 18 da LGPD)</h2>
