@@ -304,6 +304,8 @@ export async function createSupportTicket(
     title: string;
     description?: string | null;
     bank_connection_id?: string | null;
+    account_id?: string | null;
+    source?: string;
   },
 ) {
   await supabase.from("support_tickets").insert({
@@ -311,7 +313,8 @@ export async function createSupportTicket(
     title: ticket.title,
     description: ticket.description ?? null,
     bank_connection_id: ticket.bank_connection_id ?? null,
-    source: "bank_sync",
+    account_id: ticket.account_id ?? null,
+    source: ticket.source ?? "bank_sync",
   });
 }
 
@@ -391,6 +394,106 @@ export async function matchInvestmentRedemptions(supabase: Db, userId: string): 
       .from("transactions")
       .update({ category_id: resgateCategoryId })
       .eq("id", match.id);
+  }
+}
+
+// Diferença mínima pra considerar divergência de verdade, não erro de
+// arredondamento de ponto flutuante.
+const BALANCE_DIVERGENCE_TOLERANCE = 0.01;
+
+// Depois de sincronizar uma conta, confere se o saldo calculado no app
+// (saldo inicial + soma dos lançamentos confirmados, mesma fórmula usada na
+// tela de Contas) bate com o saldo real que a Pluggy informou pra ela. Se
+// não bater, abre (ou atualiza, se já tinha um aberto) um ticket no painel
+// de problemas com a diferença e possíveis motivos; se a divergência sumiu
+// desde a última vez, resolve o ticket sozinho.
+async function checkBalanceDiscrepancy(
+  supabase: Db,
+  userId: string,
+  connectionId: string,
+  accountId: string,
+  pluggyBalance: number,
+): Promise<void> {
+  const { data: account } = await supabase
+    .from("accounts")
+    .select("name, initial_balance, currency")
+    .eq("id", accountId)
+    .single();
+  if (!account) return;
+
+  const { data: txs } = await supabase
+    .from("transactions")
+    .select("transaction_type, amount, account_id, destination_account_id, source")
+    .eq("user_id", userId)
+    .eq("status", "confirmed")
+    .or(`account_id.eq.${accountId},destination_account_id.eq.${accountId}`);
+
+  let delta = 0;
+  let manualCount = 0;
+  for (const t of txs ?? []) {
+    if (t.account_id === accountId) {
+      if (t.source === "manual") manualCount += 1;
+      if (t.transaction_type === "income") delta += Number(t.amount);
+      else if (t.transaction_type === "expense" || t.transaction_type === "transfer")
+        delta -= Number(t.amount);
+    } else if (t.transaction_type === "transfer" && t.destination_account_id === accountId) {
+      delta += Number(t.amount);
+    }
+  }
+  const calculatedBalance = Number(account.initial_balance) + delta;
+  const diff = calculatedBalance - pluggyBalance;
+
+  if (Math.abs(diff) < BALANCE_DIVERGENCE_TOLERANCE) {
+    // Sem divergência agora — se tinha um ticket aberto de uma sincronização
+    // anterior, o problema se resolveu sozinho.
+    await supabase
+      .from("support_tickets")
+      .update({ status: "resolved" })
+      .eq("account_id", accountId)
+      .eq("source", "balance_check")
+      .in("status", ["open", "in_progress"]);
+    return;
+  }
+
+  const reasons: string[] = [];
+  if (manualCount > 0) {
+    reasons.push(
+      `Há ${manualCount} lançamento(s) manual(is) nessa conta — confira se algum deles também chegou pelo banco (duplicidade).`,
+    );
+  }
+  reasons.push(
+    "O histórico trazido pela Pluggy pode não cobrir toda a vida da conta, o que deixaria o saldo inicial calculado na primeira sincronização impreciso.",
+  );
+
+  const currency = account.currency || "BRL";
+  const description = [
+    `Saldo calculado no app: ${currency} ${calculatedBalance.toFixed(2)}`,
+    `Saldo informado pelo banco: ${currency} ${pluggyBalance.toFixed(2)}`,
+    `Diferença: ${currency} ${diff.toFixed(2)}`,
+    "",
+    "Possíveis motivos:",
+    ...reasons.map((r) => `• ${r}`),
+  ].join("\n");
+
+  const { data: existingTicket } = await supabase
+    .from("support_tickets")
+    .select("id")
+    .eq("account_id", accountId)
+    .eq("source", "balance_check")
+    .in("status", ["open", "in_progress"])
+    .maybeSingle();
+
+  if (existingTicket) {
+    await supabase.from("support_tickets").update({ description }).eq("id", existingTicket.id);
+  } else {
+    await createSupportTicket(supabase, {
+      user_id: userId,
+      account_id: accountId,
+      bank_connection_id: connectionId,
+      source: "balance_check",
+      title: `Divergência de saldo — ${account.name}`,
+      description,
+    });
   }
 }
 
@@ -642,6 +745,11 @@ export async function syncConnection(
             .eq("user_id", userId)
             .eq("pluggy_account_id", pAccount.id);
         }
+      }
+      // Sempre confere, não só quando chegou lançamento novo — a divergência
+      // pode vir de algo já existente (ex.: um lançamento manual duplicado).
+      if (!isNewAccount) {
+        await checkBalanceDiscrepancy(supabase, userId, connection.id, accountId, pAccount.balance);
       }
     }
   }
