@@ -89,6 +89,7 @@ import { Budgets, BudgetsPanel } from "@/components/budgets";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ProfileSwitcher, useActiveProfile } from "@/components/active-profile";
 import { AccessProfiles } from "@/components/access-profiles";
+import { ProblemsPanel } from "@/components/problems-panel";
 import { DashboardCustomizer } from "@/components/dashboard-customizer";
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder, type WidgetId } from "@/lib/dashboard-widgets";
 import { BankConnections } from "@/components/bank-connections";
@@ -134,7 +135,8 @@ type View =
   | "cost_centers"
   | "assets"
   | "settings"
-  | "access_profiles";
+  | "access_profiles"
+  | "problems";
 type Modal = "account" | "transaction" | "category" | "asset" | "cost_center" | null;
 type FormState = {
   name: string;
@@ -379,6 +381,7 @@ const nav = [
   { id: "assets" as const, label: "Patrimônio", icon: TrendingUp },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
   { id: "access_profiles" as const, label: "Perfis de acesso", icon: Users },
+  { id: "problems" as const, label: "Problemas", icon: AlertTriangle },
 ];
 
 // Texto de ajuda por tela, mostrado no "?" ao lado do título — pensado pra
@@ -411,6 +414,8 @@ const VIEW_HELP: Record<View, string> = {
     'Configurações da conta: destinatários do Telegram, cartões vinculados a alertas, e o webhook do bot.\n\n• Cada destinatário escolhe frequência de relatórios (diário/semanal/mensal) e o escopo (todas as contas ou só algumas).\n• Copie o link de convite pra pessoa vincular o Telegram dela.\n• "Registrar webhook" é necessário uma vez só pra ativar o bot.',
   access_profiles:
     'Quem mais tem acesso a essa conta, além de você.\n\n• "Convidar" gera um link único — mande pra pessoa por qualquer meio.\n• Escolha o que cada convidado pode fazer: editar dados, gerenciar conexões bancárias e/ou convidar outras pessoas.\n• Revogue o acesso a qualquer momento.',
+  problems:
+    "Problemas detectados automaticamente que podem precisar da sua atenção — falhas de sincronização e divergências entre o saldo calculado no app e o saldo informado pelo banco.\n\n• Cada item mostra a possível causa, quando identificada.\n• Marque como resolvido depois de conferir e corrigir.\n• Divergências de saldo se resolvem sozinhas na próxima sincronização, se o saldo voltar a bater.",
 };
 
 const selectClass =
@@ -434,53 +439,67 @@ export function FinanceApp() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
+  const [problemsCount, setProblemsCount] = useState(0);
 
   async function load() {
     setLoading(true);
-    const [profile, accountRows, categoryRows, transactionsData, assetRows, centerRows] =
-      await Promise.all([
+    const [
+      profile,
+      accountRows,
+      categoryRows,
+      transactionsData,
+      assetRows,
+      centerRows,
+      problemRows,
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select(
+          "display_name, dashboard_filters, dashboard_widgets, transactions_filters, active_filters",
+        )
+        .maybeSingle(),
+      supabase
+        .from("accounts")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at"),
+      supabase
+        .from("categories")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("name"),
+      fetchAllRows<Transaction>((from, to) =>
         supabase
-          .from("profiles")
-          .select(
-            "display_name, dashboard_filters, dashboard_widgets, transactions_filters, active_filters",
-          )
-          .maybeSingle(),
-        supabase
-          .from("accounts")
+          .from("transactions")
           .select("*")
           .eq("user_id", activeProfile.ownerUserId)
-          .order("created_at"),
-        supabase
-          .from("categories")
-          .select("*")
-          .eq("user_id", activeProfile.ownerUserId)
-          .order("name"),
-        fetchAllRows<Transaction>((from, to) =>
-          supabase
-            .from("transactions")
-            .select("*")
-            .eq("user_id", activeProfile.ownerUserId)
-            .order("transaction_date", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to),
-        ),
-        supabase
-          .from("assets")
-          .select("*")
-          .eq("user_id", activeProfile.ownerUserId)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("cost_centers")
-          .select("*")
-          .eq("user_id", activeProfile.ownerUserId)
-          .order("name"),
-      ]);
+          .order("transaction_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      supabase
+        .from("assets")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("cost_centers")
+        .select("*")
+        .eq("user_id", activeProfile.ownerUserId)
+        .order("name"),
+      supabase
+        .from("support_tickets")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", activeProfile.ownerUserId)
+        .neq("status", "resolved"),
+    ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
     setCategories(categoryRows.data ?? []);
     setTransactions(transactionsData);
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
+    setProblemsCount(problemRows.count ?? 0);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -1109,6 +1128,11 @@ export function FinanceApp() {
                 >
                   <item.icon />
                   {item.label}
+                  {item.id === "problems" && problemsCount > 0 && (
+                    <span className="ml-auto flex size-5 items-center justify-center rounded-full bg-destructive text-[11px] font-medium text-destructive-foreground">
+                      {problemsCount}
+                    </span>
+                  )}
                 </Button>
               ))}
           </nav>
@@ -1180,7 +1204,8 @@ export function FinanceApp() {
               view !== "investments" &&
               view !== "budgets" &&
               view !== "bank_connections" &&
-              view !== "access_profiles" && (
+              view !== "access_profiles" &&
+              view !== "problems" && (
                 <Button
                   onClick={() =>
                     open(
@@ -1322,6 +1347,7 @@ export function FinanceApp() {
               )}
               {view === "settings" && <Settings accounts={accounts} onWiped={load} />}
               {view === "access_profiles" && <AccessProfiles />}
+              {view === "problems" && <ProblemsPanel onCountChange={setProblemsCount} />}
             </>
           )}
         </main>
