@@ -92,6 +92,7 @@ import { AccessProfiles } from "@/components/access-profiles";
 import { DashboardCustomizer } from "@/components/dashboard-customizer";
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder, type WidgetId } from "@/lib/dashboard-widgets";
 import { BankConnections } from "@/components/bank-connections";
+import { AccountDataSection } from "@/components/account-data-section";
 import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -4084,6 +4085,8 @@ function Settings({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AccountDataSection />
     </div>
   );
 }
