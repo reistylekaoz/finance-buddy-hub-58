@@ -25,6 +25,27 @@ function getTelegramToken(): string {
   return token;
 }
 
+// O Telegram não assina os webhooks por padrão, mas deixa registrar um
+// secret_token (enviado de volta no header X-Telegram-Bot-Api-Secret-Token
+// em toda chamada) — sem isso, /api/public/telegram/webhook aceita
+// qualquer POST de qualquer origem, bastando adivinhar/saber um chat_id já
+// vinculado pra ler ou "categorizar" lançamentos de outra pessoa. Derivado
+// do próprio TELEGRAM_BOT_TOKEN (hash, não o token em si) pra não precisar
+// de mais uma variável de ambiente — só quem tem o token do bot consegue
+// calcular o mesmo secret_token.
+async function getWebhookSecretToken(): Promise<string> {
+  const { createHash } = await import("node:crypto");
+  return createHash("sha256").update(`telegram-webhook:${getTelegramToken()}`).digest("hex");
+}
+
+export async function isValidWebhookSecret(request: Request): Promise<boolean> {
+  const provided = request.headers.get("x-telegram-bot-api-secret-token");
+  if (!provided) return false;
+  const { createHash, timingSafeEqual } = await import("node:crypto");
+  const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+  return timingSafeEqual(digest(provided), digest(await getWebhookSecretToken()));
+}
+
 async function telegramFetch<T>(method: string, body: Record<string, unknown>): Promise<T> {
   const token = getTelegramToken();
   const response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
@@ -78,7 +99,10 @@ async function answerCallbackQuery(callbackQueryId: string): Promise<void> {
 }
 
 export async function setTelegramWebhook(webhookUrl: string): Promise<void> {
-  await telegramFetch("setWebhook", { url: webhookUrl });
+  await telegramFetch("setWebhook", {
+    url: webhookUrl,
+    secret_token: await getWebhookSecretToken(),
+  });
 }
 
 let cachedBotUsername: string | null = null;
@@ -138,14 +162,12 @@ async function transcribeVoice(fileUrl: string): Promise<string> {
 type TelegramUpdate = {
   message?: {
     chat: { id: number | string };
-    from?: { username?: string };
     text?: string;
     voice?: { file_id: string };
   };
   callback_query?: {
     id: string;
     data?: string;
-    from?: { username?: string };
     message?: { chat: { id: number | string } };
   };
 };
@@ -174,10 +196,6 @@ type Recipient = {
   card_ids: string[];
 };
 
-function stripAt(username: string): string {
-  return username.startsWith("@") ? username.slice(1) : username;
-}
-
 function asStringArray(value: Json): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
@@ -202,32 +220,19 @@ function toRecipient(row: {
 
 const RECIPIENT_COLUMNS = "id, user_id, label, all_accounts, account_ids, card_ids";
 
-async function findOrLinkRecipient(
-  supabase: Db,
-  chatId: string,
-  fromUsername: string | undefined,
-): Promise<Recipient | null> {
+// Telegram @usernames são autoatribuíveis e podem ser registrados por
+// qualquer pessoa — vincular automaticamente por username permitiria a
+// alguém "roubar" o vínculo de um destinatário legítimo só registrando o
+// mesmo @usuario antes dele conversar com o bot. Por isso o único jeito de
+// vincular um chat_id novo é o link de convite (linkByToken, token opaco de
+// 128 bits); aqui só reconhecemos quem já está vinculado.
+async function findRecipientByChat(supabase: Db, chatId: string): Promise<Recipient | null> {
   const { data: byChat } = await supabase
     .from("telegram_recipients")
     .select(RECIPIENT_COLUMNS)
     .eq("telegram_chat_id", chatId)
     .maybeSingle();
-  if (byChat) return toRecipient(byChat);
-
-  if (!fromUsername) return null;
-  const { data: byUsername } = await supabase
-    .from("telegram_recipients")
-    .select(RECIPIENT_COLUMNS)
-    .ilike("telegram_username", stripAt(fromUsername))
-    .is("telegram_chat_id", null)
-    .maybeSingle();
-  if (!byUsername) return null;
-
-  await supabase
-    .from("telegram_recipients")
-    .update({ telegram_chat_id: chatId })
-    .eq("id", byUsername.id);
-  return toRecipient(byUsername);
+  return byChat ? toRecipient(byChat) : null;
 }
 
 // Vínculo pelo link de convite (/start <token>) — não depende de @usuario
@@ -673,7 +678,7 @@ async function handleCallbackQuery(
   if (!chatId || !data) return;
 
   try {
-    const recipient = await findOrLinkRecipient(supabase, chatId, callbackQuery.from?.username);
+    const recipient = await findRecipientByChat(supabase, chatId);
     if (!recipient) return;
 
     if (data === "voice:retry") {
@@ -716,10 +721,15 @@ async function handleCallbackQuery(
 }
 
 export async function handleTelegramWebhook(request: Request): Promise<Response> {
-  // Sem autenticação própria: o Telegram não assina os webhooks por padrão e
-  // essa rota só executa ações escopadas ao chat_id que já enviou a mensagem
-  // (nunca em nome de outro destinatário) — o pior caso de abuso é alguém
-  // mandar mensagens soltas pro próprio bot.
+  // Valida o secret_token que o Telegram devolve em todo POST de webhook
+  // (registrado em setTelegramWebhook). Sem essa checagem, qualquer um que
+  // descubra essa URL pública poderia forjar um update com um chat_id já
+  // vinculado a alguém e disparar ações (categorização, orçamento) em nome
+  // dessa pessoa.
+  if (!(await isValidWebhookSecret(request))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   let update: TelegramUpdate;
   try {
@@ -741,7 +751,7 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
     const startToken = /^\/start(?:\s+(\S+))?/.exec(message.text ?? "")?.[1];
     const recipient =
       (startToken ? await linkByToken(supabaseAdmin, chatId, startToken) : null) ??
-      (await findOrLinkRecipient(supabaseAdmin, chatId, message.from?.username));
+      (await findRecipientByChat(supabaseAdmin, chatId));
     if (!recipient) {
       await sendTelegramMessage(
         chatId,

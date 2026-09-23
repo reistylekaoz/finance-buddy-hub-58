@@ -15,7 +15,9 @@ export type PluggyCredentials = { clientId: string; clientSecret: string };
 //
 // As credenciais ficam na tabela isolada public.pluggy_credentials, sem
 // nenhuma policy de leitura: nem o próprio usuário consegue lê-las pelo
-// navegador. Só o backend, com service role, tem acesso.
+// navegador. Só o backend, com service role, tem acesso. O client_secret
+// também é criptografado em repouso (pluggy-crypto.server.ts) — uma camada
+// extra caso o próprio banco vaze (backup, acesso ao Lovable Cloud).
 export async function getUserPluggyCredentials(userId: string): Promise<PluggyCredentials> {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data, error } = await supabaseAdmin
@@ -31,7 +33,8 @@ export async function getUserPluggyCredentials(userId: string): Promise<PluggyCr
       "Configure o Client ID e o Client Secret da sua aplicação Pluggy em Configurações antes de conectar um banco.",
     );
   }
-  return { clientId: data.client_id, clientSecret: data.client_secret };
+  const { decryptPluggySecret } = await import("@/lib/pluggy-crypto.server");
+  return { clientId: data.client_id, clientSecret: decryptPluggySecret(data.client_secret) };
 }
 
 type PluggyAccount = {
@@ -855,12 +858,15 @@ export const savePluggyCredentials = createServerFn({ method: "POST" })
     // A gravação também passa pelo service role: a tabela de credenciais não
     // é acessível pelo role do usuário, nem para escrita.
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
-      .from("pluggy_credentials")
-      .upsert(
-        { user_id: data.ownerUserId, client_id: clientId, client_secret: clientSecret },
-        { onConflict: "user_id" },
-      );
+    const { encryptPluggySecret } = await import("@/lib/pluggy-crypto.server");
+    const { error } = await supabaseAdmin.from("pluggy_credentials").upsert(
+      {
+        user_id: data.ownerUserId,
+        client_id: clientId,
+        client_secret: encryptPluggySecret(clientSecret),
+      },
+      { onConflict: "user_id" },
+    );
     if (error) throw new Error(error.message);
     return { ok: true };
   });
