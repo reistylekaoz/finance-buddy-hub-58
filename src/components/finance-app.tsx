@@ -26,12 +26,14 @@ import {
   HelpCircle,
   Landmark,
   LayoutDashboard,
+  Lightbulb,
   Loader2,
   LogOut,
   Menu,
   Pencil,
   PiggyBank,
   Plus,
+  Repeat,
   Send,
   Settings as SettingsIcon,
   Smartphone,
@@ -1998,6 +2000,24 @@ function Metric({
     </div>
   );
 }
+
+function insightIcon(kind: string) {
+  const props = { className: "size-3.5" };
+  switch (kind) {
+    case "top_category":
+      return <Shapes {...props} />;
+    case "expense_trend":
+      return <TrendingUp {...props} />;
+    case "savings_rate":
+      return <PiggyBank {...props} />;
+    case "biggest_expense":
+      return <CircleDollarSign {...props} />;
+    case "recurring":
+      return <Repeat {...props} />;
+    default:
+      return <Lightbulb {...props} />;
+  }
+}
 function Dashboard({
   totals,
   rateDate,
@@ -2106,6 +2126,145 @@ function Dashboard({
       },
     },
   ];
+
+  // Observações automáticas do mês corrente — sempre o mês calendário atual,
+  // independente do filtro de período/moeda do resto do dashboard (são
+  // afirmações objetivas, não uma view filtrada). Só considera BRL pra não
+  // misturar moedas numa mesma frase.
+  const insights = useMemo(() => {
+    const today = new Date();
+    const monthStartIso = isoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    const monthEndIso = isoDate(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+    const prevMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const prevMonthDaysInMonth = new Date(
+      prevMonthDate.getFullYear(),
+      prevMonthDate.getMonth() + 1,
+      0,
+    ).getDate();
+    const prevMonthStartIso = isoDate(prevMonthDate);
+    const prevMonthSamePeriodEndIso = isoDate(
+      new Date(
+        prevMonthDate.getFullYear(),
+        prevMonthDate.getMonth(),
+        Math.min(today.getDate(), prevMonthDaysInMonth),
+      ),
+    );
+    const isBRL = (t: Transaction) => currencyOf(t.account_id) === "BRL";
+    const thisMonth = transactions.filter(
+      (t) =>
+        isBRL(t) &&
+        t.transaction_type !== "transfer" &&
+        t.transaction_date >= monthStartIso &&
+        t.transaction_date <= monthEndIso,
+    );
+    const prevMonthSamePeriod = transactions.filter(
+      (t) =>
+        isBRL(t) &&
+        t.transaction_type !== "transfer" &&
+        t.transaction_date >= prevMonthStartIso &&
+        t.transaction_date <= prevMonthSamePeriodEndIso,
+    );
+    const monthExpense = thisMonth
+      .filter((t) => t.transaction_type === "expense")
+      .reduce((s, t) => s + Number(t.amount), 0);
+    const monthIncome = thisMonth
+      .filter((t) => t.transaction_type === "income")
+      .reduce((s, t) => s + Number(t.amount), 0);
+    const prevExpense = prevMonthSamePeriod
+      .filter((t) => t.transaction_type === "expense")
+      .reduce((s, t) => s + Number(t.amount), 0);
+
+    const list: { kind: string; text: string; base: string }[] = [];
+
+    const expensesThisMonth = thisMonth.filter((t) => t.transaction_type === "expense");
+    if (monthExpense > 0) {
+      const byCategory = new Map<string, number>();
+      for (const t of expensesThisMonth) {
+        const label = categoryPath(t.category_id) || "Sem categoria";
+        byCategory.set(label, (byCategory.get(label) ?? 0) + Number(t.amount));
+      }
+      const top = Array.from(byCategory.entries()).sort((a, b) => b[1] - a[1])[0];
+      if (top) {
+        const pct = (top[1] / monthExpense) * 100;
+        const count = expensesThisMonth.filter(
+          (t) => (categoryPath(t.category_id) || "Sem categoria") === top[0],
+        ).length;
+        list.push({
+          kind: "top_category",
+          text: `Seus gastos com ${top[0]} representam ${pct.toFixed(1)}% das despesas deste mês.`,
+          base: `${count} lançamento${count === 1 ? "" : "s"} categorizado${count === 1 ? "" : "s"} neste mês`,
+        });
+      }
+    }
+
+    if (prevExpense > 0) {
+      const delta = ((monthExpense - prevExpense) / prevExpense) * 100;
+      list.push({
+        kind: "expense_trend",
+        text: `Suas despesas deste mês estão ${Math.abs(delta).toFixed(1)}% ${
+          delta >= 0 ? "acima" : "abaixo"
+        } do mesmo período do mês anterior.`,
+        base: `${formatCurrency(monthExpense, "BRL")} agora × ${formatCurrency(prevExpense, "BRL")} no mesmo intervalo do mês passado`,
+      });
+    }
+
+    if (monthIncome > 0) {
+      const rate = ((monthIncome - monthExpense) / monthIncome) * 100;
+      list.push({
+        kind: "savings_rate",
+        text:
+          rate >= 0
+            ? `Neste mês, você guardou ${rate.toFixed(1)}% do que recebeu.`
+            : `Neste mês, você gastou ${Math.abs(rate).toFixed(1)}% a mais do que recebeu.`,
+        base: "Receitas e despesas confirmadas no mês, sem contar transferências",
+      });
+    }
+
+    const topExpense = [...expensesThisMonth].sort(
+      (a, b) => Number(b.amount) - Number(a.amount),
+    )[0];
+    if (topExpense) {
+      list.push({
+        kind: "biggest_expense",
+        text: `A maior despesa do mês até agora foi "${topExpense.description}" (${formatCurrency(Number(topExpense.amount), "BRL")}, em ${dateFmt.format(new Date(`${topExpense.transaction_date}T12:00:00`))}).`,
+        base: "Lançamentos confirmados no mês",
+      });
+    }
+
+    // Recorrência: mesma descrição, valor parecido (±15%), em pelo menos 3
+    // meses diferentes — heurística simples, sem depender de cadastro de
+    // assinatura nenhum.
+    const groups = new Map<string, Transaction[]>();
+    for (const t of transactions.filter((t) => t.transaction_type === "expense" && isBRL(t))) {
+      const key = t.description.trim().toLowerCase();
+      if (!key) continue;
+      const arr = groups.get(key) ?? [];
+      arr.push(t);
+      groups.set(key, arr);
+    }
+    let recurringCount = 0;
+    let recurringMonthlyTotal = 0;
+    for (const txs of groups.values()) {
+      const months = new Set(txs.map((t) => t.transaction_date.slice(0, 7)));
+      if (months.size < 3) continue;
+      const amounts = txs.map((t) => Number(t.amount)).sort((a, b) => a - b);
+      const median = amounts[Math.floor(amounts.length / 2)];
+      if (median === undefined || median <= 0) continue;
+      const consistent = amounts.every((a) => Math.abs(a - median) / median <= 0.15);
+      if (!consistent) continue;
+      recurringCount += 1;
+      recurringMonthlyTotal += median;
+    }
+    if (recurringCount > 0) {
+      list.push({
+        kind: "recurring",
+        text: `Identificamos ${recurringCount} gasto${recurringCount === 1 ? "" : "s"} recorrente${recurringCount === 1 ? "" : "s"} (tipo assinatura), somando cerca de ${formatCurrency(recurringMonthlyTotal, "BRL")} por mês.`,
+        base: "Lançamentos com a mesma descrição, valor parecido e em pelo menos 3 meses diferentes",
+      });
+    }
+
+    return list;
+  }, [transactions, categoryPath, currencyOf]);
 
   // Todas as seções que somam receita/despesa (cards, gráfico de tendência
   // continua fixo em 6 meses, mas o resto sim) recalculam a partir daqui —
@@ -2300,6 +2459,34 @@ function Dashboard({
           </div>
         </section>
       ) : null,
+    insights: insights.length ? (
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-2">
+          <span className="grid size-8 flex-none place-items-center rounded-full bg-primary-soft text-primary">
+            <Lightbulb className="size-4" />
+          </span>
+          <h2 className="font-semibold">Insights</h2>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Calculados a partir dos seus lançamentos deste mês.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {insights.map((ins, index) => (
+            <div key={index} className="rounded-md border border-border p-3">
+              <div className="flex items-start gap-2.5">
+                <span className="mt-0.5 grid size-7 flex-none place-items-center rounded-full bg-muted text-muted-foreground">
+                  {insightIcon(ins.kind)}
+                </span>
+                <div>
+                  <p className="text-sm">{ins.text}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Base: {ins.base}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    ) : null,
     budgets: <BudgetsPanel onOpenAll={onOpenBudgets} />,
     forecasts:
       filteredOverdue.length > 0 || filteredThisMonth.length > 0 ? (
