@@ -2,6 +2,7 @@
 // personalização (client) quanto pelo assistente (server, ao montar o
 // prompt e validar a resposta) — fonte única pra não desalinhar os dois.
 export type WidgetId =
+  | "asset_allocation"
   | "budgets"
   | "forecasts"
   | "chart"
@@ -11,6 +12,11 @@ export type WidgetId =
   | "cost_center_summary";
 
 export const WIDGET_INFO: { id: WidgetId; label: string; description: string }[] = [
+  {
+    id: "asset_allocation",
+    label: "Para onde está o patrimônio",
+    description: "saldo em contas, investimentos por tipo e patrimônio, com % do total",
+  },
   {
     id: "budgets",
     label: "Controle orçamentário",
