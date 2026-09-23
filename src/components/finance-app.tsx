@@ -97,6 +97,7 @@ import { getDailyRates } from "@/lib/rates.functions";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { ignoreExternalIds } from "@/lib/ignored-external-ids";
+import { investmentTypeLabel } from "@/lib/investment-types";
 import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
@@ -107,6 +108,10 @@ type Category = Database["public"]["Tables"]["categories"]["Row"];
 type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
 type Asset = Database["public"]["Tables"]["assets"]["Row"];
 type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
+type InvestmentSummary = Pick<
+  Database["public"]["Tables"]["investments"]["Row"],
+  "id" | "name" | "balance" | "currency" | "investment_type"
+>;
 type TransactionsFilters = {
   accountIds: Set<string>;
   categoryIds: Set<string>;
@@ -438,6 +443,7 @@ export function FinanceApp() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [investments, setInvestments] = useState<InvestmentSummary[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
   const [problemsCount, setProblemsCount] = useState(0);
@@ -452,6 +458,7 @@ export function FinanceApp() {
       assetRows,
       centerRows,
       problemRows,
+      investmentRows,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -493,6 +500,10 @@ export function FinanceApp() {
         .select("id", { count: "exact", head: true })
         .eq("user_id", activeProfile.ownerUserId)
         .neq("status", "resolved"),
+      supabase
+        .from("investments")
+        .select("id, name, balance, currency, investment_type")
+        .eq("user_id", activeProfile.ownerUserId),
     ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
@@ -501,6 +512,7 @@ export function FinanceApp() {
     setAssets(assetRows.data ?? []);
     setCostCenters(centerRows.data ?? []);
     setProblemsCount(problemRows.count ?? 0);
+    setInvestments(investmentRows.data ?? []);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -747,6 +759,35 @@ export function FinanceApp() {
     };
   }, [assets, balanceByAccount]);
 
+  // Convertido pra BRL do mesmo jeito que o saldo das contas — sem cotação
+  // do dia, o investimento fica de fora do total em vez de entrar errado.
+  const investmentsBRL = useMemo(
+    () =>
+      investments.map((inv) => {
+        const rate = rateOf(inv.currency || "BRL");
+        return { ...inv, balanceBRL: rate !== null ? Number(inv.balance) * rate : null };
+      }),
+    [investments, rates],
+  );
+  const investmentsTotal = useMemo(
+    () => investmentsBRL.reduce((s, i) => s + (i.balanceBRL ?? 0), 0),
+    [investmentsBRL],
+  );
+  const investmentsByType = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const inv of investmentsBRL) {
+      if (inv.balanceBRL === null) continue;
+      map.set(inv.investment_type, (map.get(inv.investment_type) ?? 0) + inv.balanceBRL);
+    }
+    return Array.from(map.entries())
+      .map(([type, value]) => ({ type, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [investmentsBRL]);
+  // Patrimônio líquido: contas + investimentos + patrimônio cadastrado
+  // (imóveis, veículos etc.) menos dívidas cadastradas — ainda não inclui
+  // fatura em aberto de cartão, que vive num módulo à parte.
+  const netWorth = totals.balance + investmentsTotal + totals.assetTotal - totals.liabilityTotal;
+
   const chartDataByCurrency = useMemo(() => {
     const currencies = sortCurrencyKeys(
       Array.from(new Set(accounts.filter((a) => a.is_active).map((a) => a.currency || "BRL"))),
@@ -919,7 +960,11 @@ export function FinanceApp() {
         .select("external_id")
         .eq("id", id)
         .maybeSingle();
-      await ignoreExternalIds(activeProfile.ownerUserId, [row?.external_id], "excluido_pelo_usuario");
+      await ignoreExternalIds(
+        activeProfile.ownerUserId,
+        [row?.external_id],
+        "excluido_pelo_usuario",
+      );
     }
     const { error: delError } = await supabase.from(tableOf[type]).delete().eq("id", id);
     setDeleting(false);
@@ -1259,6 +1304,7 @@ export function FinanceApp() {
                   transactions={reportableTransactions}
                   provisions={reportableProvisions}
                   accounts={accounts}
+                  accountBalances={balanceByAccount}
                   categories={categories}
                   costCenters={costCenters}
                   categoryPath={categoryPath}
@@ -1272,8 +1318,16 @@ export function FinanceApp() {
                   onDeleteTx={(tx: Transaction) => remove("transaction", tx.id, tx.description)}
                   onConfirmTx={openConfirmProvision}
                   onOpenBudgets={() => setView("budgets")}
+                  onOpenAccounts={() => setView("accounts")}
+                  onOpenInvestments={() => setView("investments")}
                   widgetOrder={dashboardWidgetOrder}
                   onWidgetOrderChange={setDashboardWidgetOrder}
+                  netWorth={netWorth}
+                  assetTotal={totals.assetTotal}
+                  liabilityTotal={totals.liabilityTotal}
+                  investmentsTotal={investmentsTotal}
+                  investmentsByType={investmentsByType}
+                  investmentsCount={investments.length}
                 />
               )}
               {view === "accounts" && (
@@ -1951,6 +2005,7 @@ function Dashboard({
   transactions,
   provisions,
   accounts,
+  accountBalances,
   categories,
   costCenters,
   categoryPath,
@@ -1964,8 +2019,16 @@ function Dashboard({
   onDeleteTx,
   onConfirmTx,
   onOpenBudgets,
+  onOpenAccounts,
+  onOpenInvestments,
   widgetOrder,
   onWidgetOrderChange,
+  netWorth,
+  assetTotal,
+  liabilityTotal,
+  investmentsTotal,
+  investmentsByType,
+  investmentsCount,
 }: {
   totals: {
     balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
@@ -1982,6 +2045,7 @@ function Dashboard({
   transactions: Transaction[];
   provisions: Transaction[];
   accounts: Account[];
+  accountBalances: (Account & { balance: number; currency: string; balanceBRL: number | null })[];
   categories: Category[];
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
@@ -1995,8 +2059,16 @@ function Dashboard({
   onDeleteTx: (tx: Transaction) => void;
   onConfirmTx: (tx: Transaction) => void;
   onOpenBudgets: () => void;
+  onOpenAccounts: () => void;
+  onOpenInvestments: () => void;
   widgetOrder: WidgetId[];
   onWidgetOrderChange: (next: WidgetId[]) => void;
+  netWorth: number;
+  assetTotal: number;
+  liabilityTotal: number;
+  investmentsTotal: number;
+  investmentsByType: { type: string; value: number }[];
+  investmentsCount: number;
 }) {
   const periodPresets: PeriodPreset[] = [
     {
@@ -2178,30 +2250,56 @@ function Dashboard({
   const filteredOverdue = forecast.overdue.filter(matchesCurrency);
   const filteredThisMonth = forecast.thisMonth.filter(matchesCurrency);
 
-  const primaryBalance = isAll
-    ? {
-        label: "Saldo total",
-        value: totals.balance,
-        currency: "BRL",
-        note: totals.missingRateCurrencies.length
-          ? `Cotação indisponível hoje para ${totals.missingRateCurrencies.join(", ")} — saldo dessas contas não incluído`
-          : undefined,
-      }
-    : (() => {
-        const c = totals.balanceByCurrency.find((x) => x.currency === currencyFilter);
-        return {
-          label: `Saldo total (${currencyFilter})`,
-          value: c?.balance ?? 0,
-          currency: currencyFilter,
-          note: undefined,
-        };
-      })();
-
   // Cada painel personalizável vira uma entrada aqui — null quando não há
   // nada pra mostrar (mesma condição que já existia antes de dar pra
   // reordenar/esconder). O bloco de saldo em destaque não entra: fica
   // sempre fixo no topo, é o número mais importante da tela.
+  // Contas + cada tipo de investimento + patrimônio cadastrado, como fatias
+  // do total de ativos (dívidas ficam de fora — isso é "onde está o
+  // dinheiro", não o patrimônio líquido).
+  const totalAssets = totals.balance + investmentsTotal + assetTotal;
+  const allocationRows = [
+    { label: "Contas", value: totals.balance },
+    ...investmentsByType.map((i) => ({
+      label: `Investimentos · ${investmentTypeLabel(i.type)}`,
+      value: i.value,
+    })),
+    ...(assetTotal > 0 ? [{ label: "Patrimônio", value: assetTotal }] : []),
+  ].filter((r) => r.value > 0);
+
   const widgetNodes: Partial<Record<WidgetId, React.ReactNode>> = {
+    asset_allocation:
+      totalAssets > 0 ? (
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-semibold">Para onde está o patrimônio</h2>
+            <span className="font-mono text-sm tabular-nums text-muted-foreground">
+              {formatCurrency(totalAssets, "BRL")}
+            </span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {allocationRows.map((r) => (
+              <div key={r.label} className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{r.label}</span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(r.value, "BRL")}
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      {((r.value / totalAssets) * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary"
+                    style={{ width: `${Math.min(100, (r.value / totalAssets) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null,
     budgets: <BudgetsPanel onOpenAll={onOpenBudgets} />,
     forecasts:
       filteredOverdue.length > 0 || filteredThisMonth.length > 0 ? (
@@ -2435,21 +2533,146 @@ function Dashboard({
         </select>
       </div>
 
-      {/* Saldo em destaque + receita/despesa/resultado do período num único
-          painel, em vez de um card por número — é o que a maioria dos
-          dashboards financeiros atuais (Mercury, Copilot, Monarch) faz pra
-          não competir visualmente com o saldo, que é o número mais importante. */}
+      {/* Visão geral fixa (não entra na personalização): patrimônio líquido,
+          saldo em contas e investimentos, cada um com seu detalhamento —
+          são os três números que respondem "como eu estou?" de cara. */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div className="flex items-center gap-2">
+            <span className="grid size-8 flex-none place-items-center rounded-full bg-primary-soft text-primary">
+              <Landmark className="size-4" />
+            </span>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              Patrimônio líquido
+            </p>
+          </div>
+          <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">
+            {formatCurrency(netWorth, "BRL")}
+          </p>
+          <div className="mt-4 space-y-1.5 border-t border-border pt-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Contas + investimentos + patrimônio</span>
+              <span className="font-mono tabular-nums">
+                {formatCurrency(totals.balance + investmentsTotal + assetTotal, "BRL")}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Dívidas cadastradas</span>
+              <span className="font-mono tabular-nums text-expense">
+                {formatCurrency(liabilityTotal, "BRL")}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div className="flex items-center gap-2">
+            <span className="grid size-8 flex-none place-items-center rounded-full bg-primary-soft text-primary">
+              <WalletCards className="size-4" />
+            </span>
+            <p className="text-xs font-medium uppercase text-muted-foreground">Saldo em contas</p>
+          </div>
+          <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">
+            {formatCurrency(totals.balance, "BRL")}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {accountBalances.filter((a) => a.is_active).length} conta
+            {accountBalances.filter((a) => a.is_active).length === 1 ? "" : "s"} bancária
+            {accountBalances.filter((a) => a.is_active).length === 1 ? "" : "s"}
+          </p>
+          <div className="mt-4 space-y-2 border-t border-border pt-3">
+            {accountBalances
+              .filter((a) => a.is_active)
+              .sort((a, b) => (b.balanceBRL ?? b.balance) - (a.balanceBRL ?? a.balance))
+              .slice(0, 4)
+              .map((a) => (
+                <div key={a.id} className="flex items-center justify-between text-xs">
+                  <span className="truncate text-muted-foreground">{a.name}</span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(a.balance, a.currency)}
+                  </span>
+                </div>
+              ))}
+            {!accountBalances.some((a) => a.is_active) && (
+              <p className="text-xs text-muted-foreground">Nenhuma conta ativa.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenAccounts}
+            className="mt-4 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            Ver contas <ChevronRight className="size-3.5" />
+          </button>
+        </section>
+
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div className="flex items-center gap-2">
+            <span className="grid size-8 flex-none place-items-center rounded-full bg-primary-soft text-primary">
+              <TrendingUp className="size-4" />
+            </span>
+            <p className="text-xs font-medium uppercase text-muted-foreground">Investimentos</p>
+          </div>
+          <p className="mt-2 font-mono text-2xl font-semibold tabular-nums">
+            {formatCurrency(investmentsTotal, "BRL")}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {investmentsCount} investimento{investmentsCount === 1 ? "" : "s"}
+          </p>
+          <div className="mt-4 space-y-2 border-t border-border pt-3">
+            {investmentsByType.slice(0, 4).map((i) => (
+              <div key={i.type} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{investmentTypeLabel(i.type)}</span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(i.value, "BRL")}
+                    {investmentsTotal > 0 && (
+                      <span className="ml-1.5 text-muted-foreground">
+                        {((i.value / investmentsTotal) * 100).toFixed(1)}%
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary"
+                    style={{
+                      width: `${investmentsTotal > 0 ? Math.min(100, (i.value / investmentsTotal) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+            {!investmentsByType.length && (
+              <p className="text-xs text-muted-foreground">
+                Nenhum investimento sincronizado ainda.
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenInvestments}
+            className="mt-4 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            Ver investimentos <ChevronRight className="size-3.5" />
+          </button>
+        </section>
+      </div>
+
+      {/* Receita × despesa do período selecionado, num único painel em vez de
+          um card por número — é o que a maioria dos dashboards financeiros
+          atuais (Mercury, Copilot, Monarch) faz pra não competir visualmente
+          com os números acima. */}
       <section className="rounded-lg border border-border bg-card p-6">
         <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
           <div>
             <p className="text-xs font-medium uppercase text-muted-foreground">
-              {primaryBalance.label}
+              Resultado do período
             </p>
-            <p className="mt-1.5 font-mono text-4xl font-semibold tabular-nums">
-              {formatCurrency(primaryBalance.value, primaryBalance.currency)}
-            </p>
-            {primaryBalance.note && (
-              <p className="mt-2 max-w-sm text-xs text-muted-foreground">{primaryBalance.note}</p>
+            {totals.missingRateCurrencies.length > 0 && (
+              <p className="mt-2 max-w-sm text-xs text-muted-foreground">
+                {`Cotação indisponível hoje para ${totals.missingRateCurrencies.join(", ")} — saldo dessas contas não incluído no patrimônio líquido`}
+              </p>
             )}
           </div>
           {filteredByCurrency.length > 0 && (

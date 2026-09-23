@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { matchInvestmentRedemptions } from "@/lib/pluggy.functions";
+import { INVESTMENT_TYPE_LABELS, investmentTypeLabel } from "@/lib/investment-types";
 import { cn } from "@/lib/utils";
 import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
@@ -34,16 +35,7 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 const selectClass =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
 
-const TYPE_LABELS: Record<string, string> = {
-  COE: "COE",
-  EQUITY: "Ações",
-  ETF: "ETF",
-  FIXED_INCOME: "Renda fixa",
-  MUTUAL_FUND: "Fundo de investimento",
-  SECURITY: "Título",
-  OTHER: "Outro",
-};
-const TYPE_OPTIONS = Object.entries(TYPE_LABELS);
+const TYPE_OPTIONS = Object.entries(INVESTMENT_TYPE_LABELS);
 
 const MOVEMENT_LABELS: Record<string, string> = {
   BUY: "Aplicação",
@@ -54,10 +46,6 @@ const MOVEMENT_LABELS: Record<string, string> = {
   AMORTIZATION: "Amortização",
 };
 const MOVEMENT_OPTIONS = Object.entries(MOVEMENT_LABELS);
-
-function typeLabel(type: string): string {
-  return TYPE_LABELS[type] ?? type;
-}
 
 function movementLabel(type: string): string {
   return MOVEMENT_LABELS[type] ?? type;
@@ -395,7 +383,7 @@ export function Investments() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold">{investment.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {typeLabel(investment.investment_type)}
+                          {investmentTypeLabel(investment.investment_type)}
                           {investment.investment_subtype
                             ? ` · ${investment.investment_subtype}`
                             : ""}
