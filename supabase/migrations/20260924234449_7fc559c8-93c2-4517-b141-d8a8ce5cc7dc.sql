@@ -1,0 +1,1 @@
+DELETE FROM public.transactions WHERE id = 'e054e8b6-b380-4f08-a9f2-3dd6783a0219';
