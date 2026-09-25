@@ -10,10 +10,6 @@ import {
 type Db = SupabaseClient<Database>;
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
-const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-// Groq expõe o Whisper com uma API compatível com a da OpenAI — bem mais
-// barato/rápido que a OpenAI direto, mesmo formato de chamada.
-const GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 function getTelegramToken(): string {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
@@ -95,52 +91,12 @@ export async function getBotUsername(): Promise<string> {
   return cachedBotUsername;
 }
 
-async function getTelegramFileUrl(fileId: string): Promise<string> {
-  const token = getTelegramToken();
-  const file = await telegramFetch<{ file_path: string }>("getFile", { file_id: fileId });
-  return `${TELEGRAM_API_BASE}/file/bot${token}/${file.file_path}`;
-}
-
-// Transcreve o áudio (mensagem de voz do Telegram, formato OGG/Opus) via
-// Whisper na Groq. A Anthropic não recebe áudio na API de mensagens, por
-// isso esse passo extra antes de cair na mesma interpretação por texto.
-async function transcribeVoice(fileUrl: string): Promise<string> {
-  const apiKey = process.env["GROQ_API_KEY"];
-  if (!apiKey) {
-    throw new Error(
-      "Transcrição de voz não configurada: defina GROQ_API_KEY nas variáveis de ambiente do Lovable Cloud.",
-    );
-  }
-  const audioResponse = await fetch(fileUrl);
-  if (!audioResponse.ok) {
-    throw new Error(`Falha ao baixar áudio do Telegram (${audioResponse.status}).`);
-  }
-  const audioBlob = await audioResponse.blob();
-
-  const form = new FormData();
-  form.append("file", audioBlob, "voice.ogg");
-  form.append("model", "whisper-large-v3-turbo");
-  form.append("language", "pt");
-  form.append("response_format", "text");
-
-  const response = await fetch(GROQ_TRANSCRIPTION_URL, {
-    method: "POST",
-    headers: { authorization: `Bearer ${apiKey}` },
-    body: form,
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Groq respondeu ${response.status}: ${body.slice(0, 300)}`);
-  }
-  return (await response.text()).trim();
-}
-
 type TelegramUpdate = {
   message?: {
     chat: { id: number | string };
     from?: { username?: string };
     text?: string;
-    voice?: { file_id: string };
+    voice?: unknown;
   };
   callback_query?: {
     id: string;
@@ -336,8 +292,7 @@ async function applyCategorization(
 
 // Reconsulta o que ainda está pendente nesse dígest (reviewed_at IS NULL) e,
 // se não sobrou nada, marca como resolvido — chamado depois de cada
-// categorização manual (por botão) pra manter o mesmo comportamento da
-// categorização por texto/voz.
+// categorização manual (por botão).
 async function markDigestResolvedIfDone(
   supabase: Db,
   recipient: Recipient,
@@ -509,156 +464,6 @@ function money(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
-async function interpretCategorization(
-  items: PendingItem[],
-  categories: CategoryOption[],
-  userText: string,
-): Promise<Map<string, string | null>> {
-  const apiKey = process.env["ANTHROPIC_API_KEY"];
-  if (!apiKey) {
-    throw new Error(
-      "Assistente de categorização não configurado: defina ANTHROPIC_API_KEY nas variáveis de ambiente do Lovable Cloud.",
-    );
-  }
-
-  const itemsBlock = items
-    .map(
-      (item) =>
-        `- id: ${item.id} | tipo: ${item.transaction_type} | descrição: "${item.description}" | valor: ${money(item.amount)}`,
-    )
-    .join("\n");
-  const categoriesBlock = categories
-    .map(
-      (category) =>
-        `- id: ${category.id} | nome: "${category.name}" | tipo: ${category.category_type}`,
-    )
-    .join("\n");
-
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 1024,
-      system:
-        'Você categoriza lançamentos financeiros brasileiros a partir de uma mensagem livre que o usuário mandou pelo Telegram. Responda SOMENTE com um array JSON, sem nenhum texto antes ou depois, no formato exato: [{"id":"<id do lançamento>","category_id":"<id da categoria escolhida ou null>"}] — um item para cada lançamento pendente listado, na mesma ordem. Use null quando não conseguir identificar a categoria com confiança a partir da mensagem.',
-      messages: [
-        {
-          role: "user",
-          content: `Lançamentos pendentes:\n${itemsBlock}\n\nCategorias disponíveis:\n${categoriesBlock}\n\nMensagem do usuário: "${userText}"`,
-        },
-      ],
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Anthropic respondeu ${response.status}: ${body.slice(0, 300)}`);
-  }
-  const data = (await response.json()) as { content: { type: string; text?: string }[] };
-  const text = data.content.find((block) => block.type === "text")?.text ?? "";
-  const jsonMatch = /\[[\s\S]*\]/.exec(text);
-  if (!jsonMatch) throw new Error(`Resposta do assistente não veio em JSON: ${text.slice(0, 200)}`);
-  const parsed = JSON.parse(jsonMatch[0]) as { id: string; category_id: string | null }[];
-
-  const result = new Map<string, string | null>();
-  for (const row of parsed) result.set(row.id, row.category_id);
-  return result;
-}
-
-// Interpreta a categorização por texto/voz e já manda a resposta pro chat.
-// `prefix` é usado pelo fluxo de voz pra prefixar com a transcrição
-// ("🎙️ Entendi: ..."). Para os lançamentos que a IA não conseguiu
-// identificar com confiança, manda os botões de categoria na hora — em vez
-// de só pedir pra descrever de novo — pra sempre ter uma saída manual.
-async function handleCategorizationReply(
-  supabase: Db,
-  recipient: Recipient,
-  chatId: string,
-  text: string,
-  prefix: string,
-): Promise<void> {
-  const pending = await fetchLatestPendingItems(supabase, recipient);
-  if (!pending) {
-    await sendTelegramMessage(
-      chatId,
-      `${prefix}Não tem nada pendente de categorização agora. Assim que eu detectar novos gastos, aviso por aqui.`,
-    );
-    return;
-  }
-  if (!pending.items.length) {
-    await sendTelegramMessage(
-      chatId,
-      `${prefix}Já está tudo revisado, nada pendente no momento. 👍`,
-    );
-    return;
-  }
-
-  const { data: categoryRows } = await supabase
-    .from("categories")
-    .select("id, name, category_type")
-    .eq("user_id", recipient.user_id);
-  const categories = categoryRows ?? [];
-  if (!categories.length) {
-    await sendTelegramMessage(
-      chatId,
-      `${prefix}Você ainda não tem categorias cadastradas no app — crie ao menos uma antes de categorizar por aqui.`,
-    );
-    return;
-  }
-
-  const mapping = await interpretCategorization(pending.items, categories, text);
-
-  const resolved: string[] = [];
-  const unresolvedItems: PendingItem[] = [];
-  for (const item of pending.items) {
-    const categoryId = mapping.get(item.id);
-    const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
-    if (!category) {
-      unresolvedItems.push(item);
-      continue;
-    }
-    const table = item.kind === "bank" ? "transactions" : "credit_card_transactions";
-    await supabase
-      .from(table)
-      .update({ category_id: category.id, reviewed_at: new Date().toISOString() })
-      .eq("id", item.id);
-    resolved.push(`${item.label} → ${category.name}`);
-  }
-
-  if (!unresolvedItems.length) {
-    await supabase
-      .from("telegram_digests")
-      .update({ resolved_at: new Date().toISOString() })
-      .eq("id", pending.digestId);
-  }
-
-  const parts: string[] = [];
-  if (resolved.length) parts.push(`Categorizei:\n${resolved.map((r) => `✅ ${r}`).join("\n")}`);
-  if (unresolvedItems.length)
-    parts.push(
-      `Não consegui identificar a categoria de ${unresolvedItems.length} lançamento${unresolvedItems.length === 1 ? "" : "s"} — escolha pelos botões abaixo:`,
-    );
-  await sendTelegramMessage(chatId, prefix + (parts.join("\n\n") || "Nada processado."));
-  for (const item of unresolvedItems) {
-    await sendItemCategoryButtons(chatId, item, categories);
-  }
-}
-
-// Botões mostrados sempre que o bot não consegue identificar o comando de
-// voz (áudio vazio/incompreensível ou erro no processamento) — em vez de só
-// pedir pra tentar de novo, oferece a categorização manual por botão como
-// alternativa.
-const VOICE_FAILURE_BUTTONS: InlineButton[][] = [
-  [
-    { text: "🔁 Tentar de novo", callback_data: "voice:retry" },
-    { text: "☑️ Categorizar manualmente", callback_data: "voice:manual" },
-  ],
-];
-
 async function handleCallbackQuery(
   supabase: Db,
   callbackQuery: NonNullable<TelegramUpdate["callback_query"]>,
@@ -676,11 +481,7 @@ async function handleCallbackQuery(
     const recipient = await findOrLinkRecipient(supabase, chatId, callbackQuery.from?.username);
     if (!recipient) return;
 
-    if (data === "voice:retry") {
-      await sendTelegramMessage(chatId, "Beleza, pode mandar o áudio de novo quando quiser 🎙️");
-      return;
-    }
-    if (data === "voice:manual") {
+    if (data === "manual") {
       await sendManualCategorization(supabase, recipient, chatId);
       return;
     }
@@ -750,50 +551,17 @@ export async function handleTelegramWebhook(request: Request): Promise<Response>
       return new Response("ok", { status: 200 });
     }
 
-    if (message.voice) {
-      try {
-        const fileUrl = await getTelegramFileUrl(message.voice.file_id);
-        const transcript = await transcribeVoice(fileUrl);
-        if (!transcript) {
-          await sendTelegramKeyboard(
-            chatId,
-            "Não consegui entender esse áudio. O que você quer fazer?",
-            VOICE_FAILURE_BUTTONS,
-          );
-          return new Response("ok", { status: 200 });
-        }
-        await handleCategorizationReply(
-          supabaseAdmin,
-          recipient,
-          chatId,
-          transcript,
-          `🎙️ Entendi: "${transcript}"\n\n`,
-        );
-      } catch (voiceError) {
-        console.error("[telegram voice]", voiceError);
-        // Antes essa mensagem era sempre genérica e escondia se o problema
-        // foi na transcrição (Groq) ou na interpretação (Anthropic) — os
-        // dois lançam erro com uma mensagem já pensada pra ser lida pelo
-        // usuário (nunca inclui a chave em si, só o nome da variável que
-        // falta), então mostrar direto ajuda a identificar a causa real.
-        const detail = voiceError instanceof Error ? voiceError.message : String(voiceError);
-        await sendTelegramKeyboard(
-          chatId,
-          `Não consegui processar esse áudio agora: ${detail}\n\nO que você quer fazer?`,
-          VOICE_FAILURE_BUTTONS,
-        );
-      }
-      return new Response("ok", { status: 200 });
-    }
-
-    if (message.text && !message.text.startsWith("/")) {
-      await handleCategorizationReply(supabaseAdmin, recipient, chatId, message.text, "");
+    // Categorização é só por botão agora — qualquer tentativa de interação
+    // (áudio ou texto solto) manda direto a lista de botões, em vez de tentar
+    // interpretar o conteúdo.
+    if (message.voice || (message.text && !message.text.startsWith("/"))) {
+      await sendManualCategorization(supabaseAdmin, recipient, chatId);
       return new Response("ok", { status: 200 });
     }
 
     await sendTelegramMessage(
       chatId,
-      `Oi, ${recipient.label || "tudo bem"}! Conforme a frequência configurada, eu mando por aqui os gastos detectados automaticamente — é só responder descrevendo as categorias.`,
+      `Oi, ${recipient.label || "tudo bem"}! Conforme a frequência configurada, eu mando por aqui os gastos detectados automaticamente, com um botão pra você categorizar cada um.`,
     );
   } catch (error) {
     console.error("[telegram webhook]", error);
@@ -932,12 +700,11 @@ async function sendDigestForRecipient(
       `- ${money(Number(row.amount))} · ${row.description} · ${cardName.get(row.card_id) ?? "cartão"}`,
     );
   }
-  lines.push(
-    "",
-    'Responda descrevendo as categorias (ex.: "o Uber foi transporte, o resto foi mercado").',
-  );
+  lines.push("", "Toque no botão abaixo pra categorizar cada um.");
 
-  await sendTelegramMessage(recipient.telegram_chat_id, lines.join("\n"));
+  await sendTelegramKeyboard(recipient.telegram_chat_id, lines.join("\n"), [
+    [{ text: "☑️ Categorizar manualmente", callback_data: "manual" }],
+  ]);
   await supabaseAdmin.from("telegram_digests").insert({
     user_id: recipient.user_id,
     recipient_id: recipient.id,
