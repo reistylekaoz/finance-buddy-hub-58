@@ -717,7 +717,51 @@ export async function syncConnection(
             if (row.external_id) knownIds.add(row.external_id);
           }
         }
-        const newRows = rows.filter((r) => !knownIds.has(r.external_id));
+        let newRows = rows.filter((r) => !knownIds.has(r.external_id));
+
+        // A Pluggy às vezes troca o id de uma movimentação antiga (ex.: muda
+        // a descrição de "DES:" para "DES "). Sem isso o lançamento já
+        // conciliado voltava com id novo. Se já existe um lançamento do banco
+        // na mesma conta, data e valor cujo id antigo não vem mais da Pluggy,
+        // é a mesma movimentação: não recria.
+        if (newRows.length) {
+          const batchIds = new Set(rows.map((r) => r.external_id));
+          const dates = Array.from(new Set(newRows.map((r) => r.transaction_date)));
+          const { data: sameDay } = await supabase
+            .from("transactions")
+            .select("id, amount, transaction_date, external_id")
+            .eq("user_id", userId)
+            .or(`account_id.eq.${accountId},destination_account_id.eq.${accountId}`)
+            .in("transaction_date", dates)
+            .not("external_id", "is", null);
+          const stale = (sameDay ?? []).filter(
+            (t) => t.external_id && !batchIds.has(t.external_id),
+          );
+          const used = new Set<string>();
+          const skipped: string[] = [];
+          newRows = newRows.filter((r) => {
+            const match = stale.find(
+              (t) =>
+                !used.has(t.id) &&
+                t.transaction_date === r.transaction_date &&
+                Math.abs(Number(t.amount) - r.amount) < 0.005,
+            );
+            if (!match) return true;
+            used.add(match.id);
+            skipped.push(r.external_id);
+            return false;
+          });
+          if (skipped.length) {
+            await supabase.from("ignored_external_ids").upsert(
+              skipped.map((external_id) => ({
+                user_id: userId,
+                external_id,
+                reason: "id_reatribuido_pluggy",
+              })),
+              { onConflict: "user_id,external_id", ignoreDuplicates: true },
+            );
+          }
+        }
         if (newRows.length) {
           const { error } = await supabase
             .from("transactions")
