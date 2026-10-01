@@ -1312,6 +1312,7 @@ export function FinanceApp() {
                   categoryPath={categoryPath}
                   centerName={centerName}
                   currencyOf={currencyOf}
+                  rateOf={rateOf}
                   currencyFilter={dashboardCurrencyFilter}
                   onCurrencyFilterChange={setDashboardCurrencyFilter}
                   period={dashboardPeriod}
@@ -2031,6 +2032,7 @@ function Dashboard({
   categoryPath,
   centerName,
   currencyOf,
+  rateOf,
   currencyFilter,
   onCurrencyFilterChange,
   period,
@@ -2071,6 +2073,7 @@ function Dashboard({
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
   currencyOf: (accountId: string | null) => string;
+  rateOf: (currency: string) => number | null;
   currencyFilter: string;
   onCurrencyFilterChange: (value: string) => void;
   period: Period;
@@ -2340,6 +2343,81 @@ function Dashboard({
     .map((r) => ({ ...r, currencies: r.currencies.filter(showCurrency) }))
     .filter((r) => r.currencies.length > 0);
 
+  // Evolução do saldo total em contas nos últimos 90 dias — reconstruído a
+  // partir do saldo inicial de cada conta ativa + os lançamentos confirmados
+  // até cada dia (mesma fórmula do saldo atual, aplicada retroativamente).
+  // Sem cotação histórica, cada dia converte pela cotação de hoje — mesma
+  // simplificação já usada no saldo atual (ver `totals` em FinanceApp).
+  const BALANCE_HISTORY_DAYS = 90;
+  const balanceHistory = useMemo(() => {
+    const activeAccounts = accounts.filter((a) => a.is_active);
+    if (!activeAccounts.length) return [];
+
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - (BALANCE_HISTORY_DAYS - 1));
+    const startIso = isoDate(startDate);
+
+    const balances = new Map<string, number>(
+      activeAccounts.map((a) => [a.id, Number(a.initial_balance)]),
+    );
+    function applyTx(t: Transaction) {
+      if (t.transaction_type === "income" && balances.has(t.account_id)) {
+        balances.set(t.account_id, balances.get(t.account_id)! + Number(t.amount));
+      } else if (t.transaction_type === "expense" && balances.has(t.account_id)) {
+        balances.set(t.account_id, balances.get(t.account_id)! - Number(t.amount));
+      } else if (t.transaction_type === "transfer") {
+        if (balances.has(t.account_id)) {
+          balances.set(t.account_id, balances.get(t.account_id)! - Number(t.amount));
+        }
+        if (t.destination_account_id && balances.has(t.destination_account_id)) {
+          balances.set(
+            t.destination_account_id,
+            balances.get(t.destination_account_id)! + Number(t.amount),
+          );
+        }
+      }
+    }
+    function totalBRL(): number | null {
+      let sum = 0;
+      for (const acc of activeAccounts) {
+        const rate = rateOf(acc.currency || "BRL");
+        if (rate === null) return null;
+        sum += (balances.get(acc.id) ?? 0) * rate;
+      }
+      return sum;
+    }
+
+    const sorted = [...transactions].sort((a, b) =>
+      a.transaction_date < b.transaction_date
+        ? -1
+        : a.transaction_date > b.transaction_date
+          ? 1
+          : 0,
+    );
+    let idx = 0;
+    while (idx < sorted.length && sorted[idx]!.transaction_date < startIso) {
+      applyTx(sorted[idx]!);
+      idx++;
+    }
+
+    const points: { date: string; balance: number }[] = [];
+    for (let d = 0; d < BALANCE_HISTORY_DAYS; d++) {
+      const dateObj = new Date(startDate);
+      dateObj.setDate(dateObj.getDate() + d);
+      const dateIso = isoDate(dateObj);
+      while (idx < sorted.length && sorted[idx]!.transaction_date === dateIso) {
+        applyTx(sorted[idx]!);
+        idx++;
+      }
+      const balance = totalBRL();
+      if (balance !== null) {
+        points.push({ date: dateIso.slice(5).split("-").reverse().join("/"), balance });
+      }
+    }
+    return points;
+  }, [transactions, accounts, rateOf]);
+
   // Saldo projetado: saldo atual de cada moeda + soma acumulada das
   // provisões (previsões ainda não confirmadas) de hoje em diante, um ponto
   // por data com provisão — dá pra ver pra onde o saldo tende a ir.
@@ -2456,6 +2534,45 @@ function Dashboard({
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+      ) : null,
+    balance_history:
+      balanceHistory.length > 1 ? (
+        <section className="rounded-lg border border-border bg-card p-5">
+          <div>
+            <h2 className="font-semibold">Evolução do saldo</h2>
+            <p className="text-xs text-muted-foreground">
+              Saldo total em contas ativas nos últimos {BALANCE_HISTORY_DAYS} dias
+            </p>
+          </div>
+          <div className="mt-4 h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={balanceHistory}>
+                <defs>
+                  <linearGradient id="balance-history" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.32} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  interval={Math.max(0, Math.ceil(balanceHistory.length / 8) - 1)}
+                />
+                <YAxis tickLine={false} axisLine={false} width={70} />
+                <Tooltip formatter={(v) => formatCurrency(Number(v), "BRL")} />
+                <Area
+                  type="monotone"
+                  dataKey="balance"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  fill="url(#balance-history)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </section>
       ) : null,

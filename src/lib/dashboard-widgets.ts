@@ -3,6 +3,7 @@
 // prompt e validar a resposta) — fonte única pra não desalinhar os dois.
 export type WidgetId =
   | "asset_allocation"
+  | "balance_history"
   | "insights"
   | "budgets"
   | "forecasts"
@@ -17,6 +18,11 @@ export const WIDGET_INFO: { id: WidgetId; label: string; description: string }[]
     id: "asset_allocation",
     label: "Para onde está o patrimônio",
     description: "saldo em contas, investimentos por tipo e patrimônio, com % do total",
+  },
+  {
+    id: "balance_history",
+    label: "Evolução do saldo",
+    description: "saldo total em contas ao longo dos últimos 90 dias, num gráfico de linha",
   },
   {
     id: "insights",
