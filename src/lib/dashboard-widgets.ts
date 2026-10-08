@@ -4,6 +4,7 @@
 export type WidgetId =
   | "asset_allocation"
   | "balance_history"
+  | "credit_card_spending"
   | "insights"
   | "budgets"
   | "forecasts"
@@ -23,6 +24,12 @@ export const WIDGET_INFO: { id: WidgetId; label: string; description: string }[]
     id: "balance_history",
     label: "Evolução do saldo",
     description: "saldo total em contas ao longo dos últimos 90 dias, num gráfico de linha",
+  },
+  {
+    id: "credit_card_spending",
+    label: "Gastos no cartão",
+    description:
+      "fatura atual e limite utilizado de cada cartão de crédito ativo, com link pra tela de Cartões",
   },
   {
     id: "insights",
