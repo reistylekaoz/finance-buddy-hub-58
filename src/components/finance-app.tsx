@@ -100,6 +100,7 @@ import { BANKS, bankByName, initialsFor } from "@/lib/banks";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { ignoreExternalIds } from "@/lib/ignored-external-ids";
 import { investmentTypeLabel } from "@/lib/investment-types";
+import { invoiceInfo } from "@/lib/credit-card-invoice";
 import { wipeUserFinancialData } from "@/lib/pluggy.functions";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import type { Database } from "@/integrations/supabase/types";
@@ -113,6 +114,14 @@ type CostCenter = Database["public"]["Tables"]["cost_centers"]["Row"];
 type InvestmentSummary = Pick<
   Database["public"]["Tables"]["investments"]["Row"],
   "id" | "name" | "balance" | "currency" | "investment_type"
+>;
+type CreditCardSummaryRow = Pick<
+  Database["public"]["Tables"]["credit_cards"]["Row"],
+  "id" | "name" | "closing_day" | "due_day" | "credit_limit"
+>;
+type OpenCardTx = Pick<
+  Database["public"]["Tables"]["credit_card_transactions"]["Row"],
+  "card_id" | "amount" | "purchase_date"
 >;
 type TransactionsFilters = {
   accountIds: Set<string>;
@@ -446,6 +455,8 @@ export function FinanceApp() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [investments, setInvestments] = useState<InvestmentSummary[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCardSummaryRow[]>([]);
+  const [openCardTxs, setOpenCardTxs] = useState<OpenCardTx[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
   const [problemsCount, setProblemsCount] = useState(0);
@@ -461,6 +472,8 @@ export function FinanceApp() {
       centerRows,
       problemRows,
       investmentRows,
+      creditCardRows,
+      openCardTxRows,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -506,6 +519,16 @@ export function FinanceApp() {
         .from("investments")
         .select("id, name, balance, currency, investment_type")
         .eq("user_id", activeProfile.ownerUserId),
+      supabase
+        .from("credit_cards")
+        .select("id, name, closing_day, due_day, credit_limit")
+        .eq("user_id", activeProfile.ownerUserId)
+        .eq("is_active", true),
+      supabase
+        .from("credit_card_transactions")
+        .select("card_id, amount, purchase_date")
+        .eq("user_id", activeProfile.ownerUserId)
+        .is("paid_at", null),
     ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
@@ -515,6 +538,8 @@ export function FinanceApp() {
     setCostCenters(centerRows.data ?? []);
     setProblemsCount(problemRows.count ?? 0);
     setInvestments(investmentRows.data ?? []);
+    setCreditCards(creditCardRows.data ?? []);
+    setOpenCardTxs(openCardTxRows.data ?? []);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -785,10 +810,50 @@ export function FinanceApp() {
       .map(([type, value]) => ({ type, value }))
       .sort((a, b) => b.value - a.value);
   }, [investmentsBRL]);
+  // Fatura atual (maior competência em aberto) e total em aberto (todas as
+  // faturas não pagas, usado pro limite utilizado) de cada cartão ativo —
+  // mesma lógica de competência da tela de Cartões. Só entram cartões com
+  // algo em aberto.
+  const creditCardSpending = useMemo(() => {
+    return creditCards
+      .map((card) => {
+        const cardTxs = openCardTxs.filter((t) => t.card_id === card.id);
+        const groups = new Map<string, { amount: number; dueDate: string }>();
+        for (const t of cardTxs) {
+          const info = invoiceInfo(t.purchase_date, card.closing_day, card.due_day);
+          const g = groups.get(info.key) ?? { amount: 0, dueDate: info.dueDate };
+          g.amount += Number(t.amount);
+          groups.set(info.key, g);
+        }
+        const totalOpen = cardTxs.reduce((s, t) => s + Number(t.amount), 0);
+        const currentKey = Array.from(groups.keys()).sort().pop();
+        const current = currentKey ? groups.get(currentKey) : undefined;
+        return {
+          id: card.id,
+          name: card.name,
+          currentInvoice: current?.amount ?? 0,
+          dueDate: current?.dueDate ?? null,
+          totalOpen,
+          creditLimit: Number(card.credit_limit),
+        };
+      })
+      .filter((c) => c.totalOpen > 0)
+      .sort((a, b) => b.totalOpen - a.totalOpen);
+  }, [creditCards, openCardTxs]);
+  const creditCardDebtTotal = useMemo(
+    () => creditCardSpending.reduce((s, c) => s + c.totalOpen, 0),
+    [creditCardSpending],
+  );
+
   // Patrimônio líquido: contas + investimentos + patrimônio cadastrado
-  // (imóveis, veículos etc.) menos dívidas cadastradas — ainda não inclui
-  // fatura em aberto de cartão, que vive num módulo à parte.
-  const netWorth = totals.balance + investmentsTotal + totals.assetTotal - totals.liabilityTotal;
+  // (imóveis, veículos etc.) menos dívidas cadastradas e faturas de cartão
+  // em aberto.
+  const netWorth =
+    totals.balance +
+    investmentsTotal +
+    totals.assetTotal -
+    totals.liabilityTotal -
+    creditCardDebtTotal;
 
   const chartDataByCurrency = useMemo(() => {
     const currencies = sortCurrencyKeys(
@@ -1323,6 +1388,7 @@ export function FinanceApp() {
                   onOpenBudgets={() => setView("budgets")}
                   onOpenAccounts={() => setView("accounts")}
                   onOpenInvestments={() => setView("investments")}
+                  onOpenCreditCards={() => setView("credit_cards")}
                   widgetOrder={dashboardWidgetOrder}
                   onWidgetOrderChange={setDashboardWidgetOrder}
                   netWorth={netWorth}
@@ -1331,6 +1397,8 @@ export function FinanceApp() {
                   investmentsTotal={investmentsTotal}
                   investmentsByType={investmentsByType}
                   investmentsCount={investments.length}
+                  creditCardSpending={creditCardSpending}
+                  creditCardDebtTotal={creditCardDebtTotal}
                 />
               )}
               {view === "accounts" && (
@@ -2043,6 +2111,7 @@ function Dashboard({
   onOpenBudgets,
   onOpenAccounts,
   onOpenInvestments,
+  onOpenCreditCards,
   widgetOrder,
   onWidgetOrderChange,
   netWorth,
@@ -2051,6 +2120,8 @@ function Dashboard({
   investmentsTotal,
   investmentsByType,
   investmentsCount,
+  creditCardSpending,
+  creditCardDebtTotal,
 }: {
   totals: {
     balanceByCurrency: { currency: string; balance: number; balanceBRL: number | null }[];
@@ -2084,6 +2155,7 @@ function Dashboard({
   onOpenBudgets: () => void;
   onOpenAccounts: () => void;
   onOpenInvestments: () => void;
+  onOpenCreditCards: () => void;
   widgetOrder: WidgetId[];
   onWidgetOrderChange: (next: WidgetId[]) => void;
   netWorth: number;
@@ -2092,6 +2164,15 @@ function Dashboard({
   investmentsTotal: number;
   investmentsByType: { type: string; value: number }[];
   investmentsCount: number;
+  creditCardSpending: {
+    id: string;
+    name: string;
+    currentInvoice: number;
+    dueDate: string | null;
+    totalOpen: number;
+    creditLimit: number;
+  }[];
+  creditCardDebtTotal: number;
 }) {
   const periodPresets: PeriodPreset[] = [
     {
@@ -2576,6 +2657,59 @@ function Dashboard({
           </div>
         </section>
       ) : null,
+    credit_card_spending: creditCardSpending.length ? (
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-baseline justify-between">
+          <h2 className="font-semibold">Gastos no cartão</h2>
+          <span className="font-mono text-sm tabular-nums text-muted-foreground">
+            {formatCurrency(creditCardDebtTotal, "BRL")}
+          </span>
+        </div>
+        <div className="mt-4 space-y-4">
+          {creditCardSpending.map((c) => {
+            const pct = c.creditLimit > 0 ? (c.totalOpen / c.creditLimit) * 100 : 0;
+            const exceeded = c.creditLimit > 0 && c.totalOpen > c.creditLimit;
+            const barColor = exceeded ? "bg-expense" : pct >= 80 ? "bg-amber-500" : "bg-primary";
+            return (
+              <div key={c.id} className="space-y-1.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">{c.name}</span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(c.currentInvoice, "BRL")}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {c.dueDate
+                    ? `Fatura atual · vence em ${dateFmt.format(new Date(`${c.dueDate}T12:00:00`))}`
+                    : "Fatura atual"}
+                </p>
+                {c.creditLimit > 0 && (
+                  <>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn("h-full transition-all", barColor)}
+                        style={{ width: `${Math.min(100, pct)}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {formatCurrency(c.totalOpen, "BRL")} em aberto de{" "}
+                      {formatCurrency(c.creditLimit, "BRL")} ({pct.toFixed(0)}%)
+                    </p>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={onOpenCreditCards}
+          className="mt-4 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          Ver cartões <ChevronRight className="size-3.5" />
+        </button>
+      </section>
+    ) : null,
     insights: insights.length ? (
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="flex items-center gap-2">
@@ -2866,6 +3000,14 @@ function Dashboard({
                 {formatCurrency(liabilityTotal, "BRL")}
               </span>
             </div>
+            {creditCardDebtTotal > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Faturas de cartão em aberto</span>
+                <span className="font-mono tabular-nums text-expense">
+                  {formatCurrency(creditCardDebtTotal, "BRL")}
+                </span>
+              </div>
+            )}
           </div>
         </section>
 

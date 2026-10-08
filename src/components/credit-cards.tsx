@@ -28,6 +28,7 @@ import { CategoryCombobox } from "@/components/ui/category-combobox";
 import { cn } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { BANKS, bankByName, initialsFor } from "@/lib/banks";
+import { invoiceInfo } from "@/lib/credit-card-invoice";
 import { useActiveProfile } from "@/components/active-profile";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -40,50 +41,6 @@ type Account = Database["public"]["Tables"]["accounts"]["Row"];
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const selectClass =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
-const monthNames = [
-  "janeiro",
-  "fevereiro",
-  "março",
-  "abril",
-  "maio",
-  "junho",
-  "julho",
-  "agosto",
-  "setembro",
-  "outubro",
-  "novembro",
-  "dezembro",
-];
-
-// Competência da fatura: se a compra caiu depois do fechamento, ela entra na
-// fatura do mês seguinte. Vencimento cai no mesmo mês da competência quando o
-// dia de vencimento é depois do fechamento; senão, no mês seguinte (convenção
-// usual dos bancos: fecha, aí só depois vence).
-function invoiceInfo(purchaseDate: string, closingDay: number, dueDay: number) {
-  const d = new Date(`${purchaseDate}T12:00:00`);
-  let month = d.getMonth();
-  let year = d.getFullYear();
-  if (d.getDate() > closingDay) {
-    month += 1;
-    if (month > 11) {
-      month = 0;
-      year += 1;
-    }
-  }
-  let dueMonth = month;
-  let dueYear = year;
-  if (dueDay <= closingDay) {
-    dueMonth += 1;
-    if (dueMonth > 11) {
-      dueMonth = 0;
-      dueYear += 1;
-    }
-  }
-  const key = `${year}-${String(month + 1).padStart(2, "0")}`;
-  const dueDate = `${dueYear}-${String(dueMonth + 1).padStart(2, "0")}-${String(dueDay).padStart(2, "0")}`;
-  return { key, label: `${monthNames[month]}/${year}`, dueDate };
-}
-
 function CurrencyInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const cents = Math.round(Math.abs(Number(value || 0)) * 100);
   const display = (cents / 100).toLocaleString("pt-BR", {
