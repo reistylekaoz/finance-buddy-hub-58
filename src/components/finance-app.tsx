@@ -119,9 +119,16 @@ type CreditCardSummaryRow = Pick<
   Database["public"]["Tables"]["credit_cards"]["Row"],
   "id" | "name" | "closing_day" | "due_day" | "credit_limit"
 >;
-type OpenCardTx = Pick<
+type CardTxForReports = Pick<
   Database["public"]["Tables"]["credit_card_transactions"]["Row"],
-  "card_id" | "amount" | "purchase_date"
+  | "id"
+  | "card_id"
+  | "amount"
+  | "purchase_date"
+  | "category_id"
+  | "cost_center_id"
+  | "description"
+  | "paid_at"
 >;
 type TransactionsFilters = {
   accountIds: Set<string>;
@@ -303,10 +310,14 @@ function buildCenterSummary(
 // ("total") — é o que permite expandir uma categoria-pai e ver o total dela
 // se abrir em subcategorias, sem perder o valor lançado direto nela.
 // Recalculado pelo dashboard a cada troca do filtro de período.
+// Cartão não tem moeda própria (sempre BRL) nem é "receita" — cada compra
+// entra na despesa em BRL do nó, e soma à parte em cardExpense, pra dar pra
+// mostrar "dos quais X no cartão" sem precisar separar por moeda.
 function buildCategoryReport(
   categories: Category[],
   transactions: Transaction[],
   currencyOf: (accountId: string | null) => string,
+  cardTransactions: CardTxForReports[] = [],
 ): { roots: CategoryNode[]; uncategorized: CategoryNode["own"] } {
   const byId = new Map<string, CategoryNode>();
   for (const c of categories) {
@@ -314,8 +325,8 @@ function buildCategoryReport(
       id: c.id,
       name: c.name,
       category_type: c.category_type,
-      own: { income: {}, expense: {}, count: 0 },
-      total: { income: {}, expense: {}, count: 0 },
+      own: { income: {}, expense: {}, cardExpense: 0, count: 0 },
+      total: { income: {}, expense: {}, cardExpense: 0, count: 0 },
       children: [],
     });
   }
@@ -327,6 +338,14 @@ function buildCategoryReport(
     const bucket = t.transaction_type === "income" ? node.own.income : node.own.expense;
     const currency = currencyOf(t.account_id);
     bucket[currency] = (bucket[currency] ?? 0) + Number(t.amount);
+    node.own.count += 1;
+  }
+  for (const t of cardTransactions) {
+    if (!t.category_id) continue;
+    const node = byId.get(t.category_id);
+    if (!node) continue;
+    node.own.expense["BRL"] = (node.own.expense["BRL"] ?? 0) + Number(t.amount);
+    node.own.cardExpense += Number(t.amount);
     node.own.count += 1;
   }
   for (const [id, node] of byId) {
@@ -342,6 +361,7 @@ function buildCategoryReport(
     const total = {
       income: { ...node.own.income },
       expense: { ...node.own.expense },
+      cardExpense: node.own.cardExpense,
       count: node.own.count,
     };
     for (const child of node.children) {
@@ -350,6 +370,7 @@ function buildCategoryReport(
         total.income[cur] = (total.income[cur] ?? 0) + val;
       for (const [cur, val] of Object.entries(child.total.expense))
         total.expense[cur] = (total.expense[cur] ?? 0) + val;
+      total.cardExpense += child.total.cardExpense;
       total.count += child.total.count;
     }
     node.total = total;
@@ -365,16 +386,23 @@ function buildCategoryReport(
   const uncategorizedTx = transactions.filter(
     (t) => !t.category_id && t.transaction_type !== "transfer",
   );
+  const uncategorizedCardTx = cardTransactions.filter((t) => !t.category_id);
+  const uncategorizedCardExpense = uncategorizedCardTx.reduce((s, t) => s + Number(t.amount), 0);
+  const uncategorizedExpense = sumTransactionsByCurrency(
+    uncategorizedTx.filter((t) => t.transaction_type === "expense"),
+    currencyOf,
+  );
+  if (uncategorizedCardExpense > 0) {
+    uncategorizedExpense["BRL"] = (uncategorizedExpense["BRL"] ?? 0) + uncategorizedCardExpense;
+  }
   const uncategorized = {
     income: sumTransactionsByCurrency(
       uncategorizedTx.filter((t) => t.transaction_type === "income"),
       currencyOf,
     ),
-    expense: sumTransactionsByCurrency(
-      uncategorizedTx.filter((t) => t.transaction_type === "expense"),
-      currencyOf,
-    ),
-    count: uncategorizedTx.length,
+    expense: uncategorizedExpense,
+    cardExpense: uncategorizedCardExpense,
+    count: uncategorizedTx.length + uncategorizedCardTx.length,
   };
 
   return { roots, uncategorized };
@@ -456,7 +484,7 @@ export function FinanceApp() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [investments, setInvestments] = useState<InvestmentSummary[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCardSummaryRow[]>([]);
-  const [openCardTxs, setOpenCardTxs] = useState<OpenCardTx[]>([]);
+  const [cardTransactions, setCardTransactions] = useState<CardTxForReports[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [accountActive, setAccountActive] = useState(true);
   const [problemsCount, setProblemsCount] = useState(0);
@@ -473,7 +501,7 @@ export function FinanceApp() {
       problemRows,
       investmentRows,
       creditCardRows,
-      openCardTxRows,
+      cardTxData,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -524,11 +552,17 @@ export function FinanceApp() {
         .select("id, name, closing_day, due_day, credit_limit")
         .eq("user_id", activeProfile.ownerUserId)
         .eq("is_active", true),
-      supabase
-        .from("credit_card_transactions")
-        .select("card_id, amount, purchase_date")
-        .eq("user_id", activeProfile.ownerUserId)
-        .is("paid_at", null),
+      fetchAllRows<CardTxForReports>((from, to) =>
+        supabase
+          .from("credit_card_transactions")
+          .select(
+            "id, card_id, amount, purchase_date, category_id, cost_center_id, description, paid_at",
+          )
+          .eq("user_id", activeProfile.ownerUserId)
+          .order("purchase_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
     setName(profile.data?.display_name || "Olá");
     setAccounts(accountRows.data ?? []);
@@ -539,7 +573,7 @@ export function FinanceApp() {
     setProblemsCount(problemRows.count ?? 0);
     setInvestments(investmentRows.data ?? []);
     setCreditCards(creditCardRows.data ?? []);
-    setOpenCardTxs(openCardTxRows.data ?? []);
+    setCardTransactions(cardTxData);
     const savedFilters = profile.data?.dashboard_filters as {
       currency?: string;
       period?: Period;
@@ -713,6 +747,14 @@ export function FinanceApp() {
     () => confirmedTransactions.filter((t) => reportableAccountIds.has(t.account_id)),
     [confirmedTransactions, reportableAccountIds],
   );
+  // creditCards já vem só com os ativos (filtrado na query) — diferente de
+  // accounts, que traz todos e filtra aqui. Lançamentos de cartão inativo
+  // ficam de fora dos relatórios, mesma regra das contas.
+  const reportableCardIds = useMemo(() => new Set(creditCards.map((c) => c.id)), [creditCards]);
+  const reportableCardTxs = useMemo(
+    () => cardTransactions.filter((t) => reportableCardIds.has(t.card_id)),
+    [cardTransactions, reportableCardIds],
+  );
   // provisões (previsões ainda não confirmadas) de contas reportáveis — usadas
   // só pelo dashboard de previsão (saldo projetado), nunca no saldo/relatórios.
   const reportableProvisions = useMemo(
@@ -817,7 +859,7 @@ export function FinanceApp() {
   const creditCardSpending = useMemo(() => {
     return creditCards
       .map((card) => {
-        const cardTxs = openCardTxs.filter((t) => t.card_id === card.id);
+        const cardTxs = cardTransactions.filter((t) => t.card_id === card.id && !t.paid_at);
         const groups = new Map<string, { amount: number; dueDate: string }>();
         for (const t of cardTxs) {
           const info = invoiceInfo(t.purchase_date, card.closing_day, card.due_day);
@@ -839,7 +881,7 @@ export function FinanceApp() {
       })
       .filter((c) => c.totalOpen > 0)
       .sort((a, b) => b.totalOpen - a.totalOpen);
-  }, [creditCards, openCardTxs]);
+  }, [creditCards, cardTransactions]);
   const creditCardDebtTotal = useMemo(
     () => creditCardSpending.reduce((s, c) => s + c.totalOpen, 0),
     [creditCardSpending],
@@ -1210,6 +1252,7 @@ export function FinanceApp() {
   };
   const centerName = (id: string | null): string =>
     costCenters.find((c) => c.id === id)?.name ?? "Sem centro de custo";
+  const cardName = (id: string): string => creditCards.find((c) => c.id === id)?.name ?? "Cartão";
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -1369,6 +1412,7 @@ export function FinanceApp() {
                   rateDate={rateDate}
                   chartDataByCurrency={chartDataByCurrency}
                   transactions={reportableTransactions}
+                  cardTransactions={reportableCardTxs}
                   provisions={reportableProvisions}
                   accounts={accounts}
                   accountBalances={balanceByAccount}
@@ -1376,6 +1420,7 @@ export function FinanceApp() {
                   costCenters={costCenters}
                   categoryPath={categoryPath}
                   centerName={centerName}
+                  cardName={cardName}
                   currencyOf={currencyOf}
                   rateOf={rateOf}
                   currencyFilter={dashboardCurrencyFilter}
@@ -2092,6 +2137,7 @@ function Dashboard({
   rateDate,
   chartDataByCurrency,
   transactions,
+  cardTransactions,
   provisions,
   accounts,
   accountBalances,
@@ -2099,6 +2145,7 @@ function Dashboard({
   costCenters,
   categoryPath,
   centerName,
+  cardName,
   currencyOf,
   rateOf,
   currencyFilter,
@@ -2136,6 +2183,7 @@ function Dashboard({
     data: { month: string; receita: number; despesa: number }[];
   }[];
   transactions: Transaction[];
+  cardTransactions: CardTxForReports[];
   provisions: Transaction[];
   accounts: Account[];
   accountBalances: (Account & { balance: number; currency: string; balanceBRL: number | null })[];
@@ -2143,6 +2191,7 @@ function Dashboard({
   costCenters: CostCenter[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
+  cardName: (id: string) => string;
   currencyOf: (accountId: string | null) => string;
   rateOf: (currency: string) => number | null;
   currencyFilter: string;
@@ -2395,9 +2444,19 @@ function Dashboard({
     [costCenters, periodTransactions],
   );
 
+  const periodCardTransactions = useMemo(
+    () =>
+      cardTransactions.filter((t) => {
+        if (period.from && t.purchase_date < period.from) return false;
+        if (period.to && t.purchase_date > period.to) return false;
+        return true;
+      }),
+    [cardTransactions, period],
+  );
+
   const periodCategoryReport = useMemo(
-    () => buildCategoryReport(categories, periodTransactions, currencyOf),
-    [categories, periodTransactions],
+    () => buildCategoryReport(categories, periodTransactions, currencyOf, periodCardTransactions),
+    [categories, periodTransactions, periodCardTransactions],
   );
 
   const availableCurrencies = sortCurrencyKeys(
@@ -2891,9 +2950,11 @@ function Dashboard({
         categoryReport={periodCategoryReport}
         currencyFilter={currencyFilter}
         transactions={periodTransactions}
+        cardTransactions={periodCardTransactions}
         accounts={accounts}
         categoryPath={categoryPath}
         centerName={centerName}
+        cardName={cardName}
         onEditTx={onEditTx}
         onDeleteTx={onDeleteTx}
       />
@@ -3284,18 +3345,30 @@ type CategoryNode = {
   id: string;
   name: string;
   category_type: "income" | "expense" | null;
-  own: { income: Record<string, number>; expense: Record<string, number>; count: number };
-  total: { income: Record<string, number>; expense: Record<string, number>; count: number };
+  own: {
+    income: Record<string, number>;
+    expense: Record<string, number>;
+    cardExpense: number;
+    count: number;
+  };
+  total: {
+    income: Record<string, number>;
+    expense: Record<string, number>;
+    cardExpense: number;
+    count: number;
+  };
   children: CategoryNode[];
 };
 
 function CategoryAmounts({
   income,
   expense,
+  cardExpense,
   currencyFilter,
 }: {
   income: Record<string, number>;
   expense: Record<string, number>;
+  cardExpense: number;
   currencyFilter: string;
 }) {
   const currencies = sortCurrencyKeys(
@@ -3303,18 +3376,68 @@ function CategoryAmounts({
       (c) => currencyFilter === "all" || c === currencyFilter,
     ),
   );
-  if (!currencies.length)
+  const showCardNote = cardExpense > 0 && (currencyFilter === "all" || currencyFilter === "BRL");
+  if (!currencies.length && !showCardNote)
     return <span className="text-xs text-muted-foreground">Sem lançamentos</span>;
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3">
-      {currencies.map((c) => (
-        <span key={c} className="whitespace-nowrap font-mono text-xs tabular-nums">
-          {income[c] ? <span className="text-income">+{formatCurrency(income[c], c)}</span> : null}
-          {income[c] && expense[c] ? " · " : ""}
-          {expense[c] ? (
-            <span className="text-expense">−{formatCurrency(expense[c], c)}</span>
-          ) : null}
+    <div className="flex flex-col items-end gap-0.5">
+      {currencies.length > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {currencies.map((c) => (
+            <span key={c} className="whitespace-nowrap font-mono text-xs tabular-nums">
+              {income[c] ? (
+                <span className="text-income">+{formatCurrency(income[c], c)}</span>
+              ) : null}
+              {income[c] && expense[c] ? " · " : ""}
+              {expense[c] ? (
+                <span className="text-expense">−{formatCurrency(expense[c], c)}</span>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      )}
+      {showCardNote && (
+        <span className="text-[11px] text-muted-foreground">
+          dos quais {formatCurrency(cardExpense, "BRL")} no cartão
         </span>
+      )}
+    </div>
+  );
+}
+
+// Lista só-leitura das compras de cartão de uma categoria — diferente de
+// TransactionRows (lançamento bancário), não dá pra editar/excluir por aqui:
+// isso vive na tela de Cartões, que lida com parcelamento e fatura.
+function CardTransactionRows({
+  cardTransactions,
+  cardName,
+}: {
+  cardTransactions: CardTxForReports[];
+  cardName: (id: string) => string;
+}) {
+  return (
+    <div className="divide-y divide-border">
+      {cardTransactions.map((tx) => (
+        <div
+          key={tx.id}
+          className="grid grid-cols-[1fr_auto] items-center gap-4 px-5 py-3 sm:grid-cols-[110px_1fr_auto]"
+        >
+          <span className="hidden text-xs text-muted-foreground sm:block">
+            {dateFmt.format(new Date(`${tx.purchase_date}T12:00:00`))}
+          </span>
+          <div>
+            <p className="text-sm font-medium">{tx.description}</p>
+            <p className="text-xs text-muted-foreground">
+              {cardName(tx.card_id)} · cartão
+              <span className="ml-1 sm:hidden">
+                · {dateFmt.format(new Date(`${tx.purchase_date}T12:00:00`))}
+              </span>
+            </p>
+          </div>
+          <span className="font-mono text-sm tabular-nums text-expense">
+            −{formatCurrency(Number(tx.amount), "BRL")}
+          </span>
+        </div>
       ))}
     </div>
   );
@@ -3328,9 +3451,11 @@ function CategoryRow({
   depth,
   currencyFilter,
   transactions,
+  cardTransactions,
   accounts,
   categoryPath,
   centerName,
+  cardName,
   onEditTx,
   onDeleteTx,
 }: {
@@ -3338,9 +3463,11 @@ function CategoryRow({
   depth: number;
   currencyFilter: string;
   transactions: Transaction[];
+  cardTransactions: CardTxForReports[];
   accounts: Account[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
+  cardName: (id: string) => string;
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
 }) {
@@ -3358,6 +3485,12 @@ function CategoryRow({
       return currency === currencyFilter;
     });
   }, [transactions, accounts, node.id, node.own.count, currencyFilter]);
+  const ownCardTransactions = useMemo(() => {
+    if (!node.own.cardExpense || (currencyFilter !== "all" && currencyFilter !== "BRL")) return [];
+    return cardTransactions.filter((t) =>
+      node.id === "__uncategorized__" ? !t.category_id : t.category_id === node.id,
+    );
+  }, [cardTransactions, node.id, node.own.cardExpense, currencyFilter]);
   const children = useMemo(
     () => [...node.children].sort((a, b) => b.total.count - a.total.count),
     [node.children],
@@ -3400,6 +3533,7 @@ function CategoryRow({
         <CategoryAmounts
           income={node.total.income}
           expense={node.total.expense}
+          cardExpense={node.total.cardExpense}
           currencyFilter={currencyFilter}
         />
       </button>
@@ -3412,9 +3546,11 @@ function CategoryRow({
               depth={depth + 1}
               currencyFilter={currencyFilter}
               transactions={transactions}
+              cardTransactions={cardTransactions}
               accounts={accounts}
               categoryPath={categoryPath}
               centerName={centerName}
+              cardName={cardName}
               onEditTx={onEditTx}
               onDeleteTx={onDeleteTx}
             />
@@ -3431,6 +3567,11 @@ function CategoryRow({
               />
             </div>
           )}
+          {ownCardTransactions.length > 0 && (
+            <div style={{ paddingLeft: `${depth * 20}px` }}>
+              <CardTransactionRows cardTransactions={ownCardTransactions} cardName={cardName} />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3441,25 +3582,25 @@ function CategoryBreakdown({
   categoryReport,
   currencyFilter,
   transactions,
+  cardTransactions,
   accounts,
   categoryPath,
   centerName,
+  cardName,
   onEditTx,
   onDeleteTx,
 }: {
   categoryReport: {
     roots: CategoryNode[];
-    uncategorized: {
-      income: Record<string, number>;
-      expense: Record<string, number>;
-      count: number;
-    };
+    uncategorized: CategoryNode["own"];
   };
   currencyFilter: string;
   transactions: Transaction[];
+  cardTransactions: CardTxForReports[];
   accounts: Account[];
   categoryPath: (id: string | null) => string;
   centerName: (id: string | null) => string;
+  cardName: (id: string) => string;
   onEditTx: (tx: Transaction) => void;
   onDeleteTx: (tx: Transaction) => void;
 }) {
@@ -3497,9 +3638,11 @@ function CategoryBreakdown({
               depth={0}
               currencyFilter={currencyFilter}
               transactions={transactions}
+              cardTransactions={cardTransactions}
               accounts={accounts}
               categoryPath={categoryPath}
               centerName={centerName}
+              cardName={cardName}
               onEditTx={onEditTx}
               onDeleteTx={onDeleteTx}
             />
@@ -3510,9 +3653,11 @@ function CategoryBreakdown({
             depth={0}
             currencyFilter={currencyFilter}
             transactions={transactions}
+            cardTransactions={cardTransactions}
             accounts={accounts}
             categoryPath={categoryPath}
             centerName={centerName}
+            cardName={cardName}
             onEditTx={onEditTx}
             onDeleteTx={onDeleteTx}
           />
